@@ -1,6 +1,219 @@
 {
   "version": "2.0",
-  "updated_at": "2026-11-10T22:30:00+00:00",
-  "posts": {},
-  "categories": []
+  "updated_at": "2026-11-20T09:54:59.257Z",
+  "posts": {
+    "best-ikea-pax-wardrobe-hacks": {
+      "slug": "best-ikea-pax-wardrobe-hacks",
+      "title": "15 Best IKEA PAX Wardrobe Hacks for Luxury Closets",
+      "excerpt": "Explore our comprehensive 15 best ikea pax wardrobe hacks for luxury closets with step-by-step room prep instructions and material specifications.",
+      "content_html": "",
+      "category": "IKEA Hacks",
+      "category_slug": "ikea-hacks",
+      "parent_slug": "ikea-hacks",
+      "date": "2026-10-25",
+      "modified": "2026-10-25",
+      "image_url": "",
+      "local_image_path": "/assets/images/best-ikea-pax-wardrobe-hacks.svg",
+      "image_width": 1200,
+      "image_height": 750,
+      "custom_edited": false,
+      "checklist": [
+        {
+          "id": "best-ikea-pax-wardrobe-hacks-1",
+          "text": "Measure room dimensions and wall clearances",
+          "checked": false
+        },
+        {
+          "id": "best-ikea-pax-wardrobe-hacks-2",
+          "text": "Select cohesive neutral palette and hardware finishes",
+          "checked": false
+        },
+        {
+          "id": "best-ikea-pax-wardrobe-hacks-3",
+          "text": "Install ambient 2700K lighting to highlight architectural lines",
+          "checked": false
+        }
+      ],
+      "takeaways": [
+        "Plan measurements carefully before starting your ikea hacks layout.",
+        "Combine concealed storage with warm natural textures for a cohesive finish."
+      ],
+      "domain": "stylesdays.com",
+      "raw_meta": {}
+    },
+    "small-walk-in-closet-ideas": {
+      "slug": "small-walk-in-closet-ideas",
+      "title": "Small Walk-In Closet Ideas for Maximum Storage",
+      "excerpt": "Explore our comprehensive small walk-in closet ideas for maximum storage with step-by-step room prep instructions and material specifications.",
+      "content_html": "",
+      "category": "Closet Storage",
+      "category_slug": "closet-storage",
+      "parent_slug": "closet-storage",
+      "date": "2026-10-25",
+      "modified": "2026-10-25",
+      "image_url": "",
+      "local_image_path": "/assets/images/small-walk-in-closet-ideas.svg",
+      "image_width": 1200,
+      "image_height": 750,
+      "custom_edited": false,
+      "checklist": [
+        {
+          "id": "small-walk-in-closet-ideas-1",
+          "text": "Measure room dimensions and wall clearances",
+          "checked": false
+        },
+        {
+          "id": "small-walk-in-closet-ideas-2",
+          "text": "Select cohesive neutral palette and hardware finishes",
+          "checked": false
+        },
+        {
+          "id": "small-walk-in-closet-ideas-3",
+          "text": "Install ambient 2700K lighting to highlight architectural lines",
+          "checked": false
+        }
+      ],
+      "takeaways": [
+        "Plan measurements carefully before starting your closet storage layout.",
+        "Combine concealed storage with warm natural textures for a cohesive finish."
+      ],
+      "domain": "stylesdays.com",
+      "raw_meta": {}
+    },
+    "ikea-kallax-nursery-storage": {
+      "slug": "ikea-kallax-nursery-storage",
+      "title": "IKEA Kallax Nursery Storage Transformations",
+      "excerpt": "Explore our comprehensive ikea kallax nursery storage transformations with step-by-step room prep instructions and material specifications.",
+      "content_html": "",
+      "category": "IKEA Hacks",
+      "category_slug": "ikea-hacks",
+      "parent_slug": "ikea-hacks",
+      "date": "2026-10-25",
+      "modified": "2026-10-25",
+      "image_url": "",
+      "local_image_path": "/assets/images/ikea-kallax-nursery-storage.svg",
+      "image_width": 1200,
+      "image_height": 750,
+      "custom_edited": false,
+      "checklist": [
+        {
+          "id": "ikea-kallax-nursery-storage-1",
+          "text": "Measure room dimensions and wall clearances",
+          "checked": false
+        },
+        {
+          "id": "ikea-kallax-nursery-storage-2",
+          "text": "Select cohesive neutral palette and hardware finishes",
+          "checked": false
+        },
+        {
+          "id": "ikea-kallax-nursery-storage-3",
+          "text": "Install ambient 2700K lighting to highlight architectural lines",
+          "checked": false
+        }
+      ],
+      "takeaways": [
+        "Plan measurements carefully before starting your ikea hacks layout.",
+        "Combine concealed storage with warm natural textures for a cohesive finish."
+      ],
+      "domain": "stylesdays.com",
+      "raw_meta": {}
+    },
+    "minimalist-bedroom-styling": {
+      "slug": "minimalist-bedroom-styling",
+      "title": "Minimalist Scandinavian Bedroom Styling Tips",
+      "excerpt": "Explore our comprehensive minimalist scandinavian bedroom styling tips with step-by-step room prep instructions and material specifications.",
+      "content_html": "",
+      "category": "Bedroom Ideas",
+      "category_slug": "bedroom-design",
+      "parent_slug": "bedroom-design",
+      "date": "2026-10-25",
+      "modified": "2026-10-25",
+      "image_url": "",
+      "local_image_path": "/assets/images/minimalist-bedroom-styling.svg",
+      "image_width": 1200,
+      "image_height": 750,
+      "custom_edited": false,
+      "checklist": [
+        {
+          "id": "minimalist-bedroom-styling-1",
+          "text": "Measure room dimensions and wall clearances",
+          "checked": false
+        },
+        {
+          "id": "minimalist-bedroom-styling-2",
+          "text": "Select cohesive neutral palette and hardware finishes",
+          "checked": false
+        },
+        {
+          "id": "minimalist-bedroom-styling-3",
+          "text": "Install ambient 2700K lighting to highlight architectural lines",
+          "checked": false
+        }
+      ],
+      "takeaways": [
+        "Plan measurements carefully before starting your bedroom ideas layout.",
+        "Combine concealed storage with warm natural textures for a cohesive finish."
+      ],
+      "domain": "stylesdays.com",
+      "raw_meta": {}
+    },
+    "cozy-living-room-layout": {
+      "slug": "cozy-living-room-layout",
+      "title": "Cozy Living Room Layouts with Layered Lighting",
+      "excerpt": "Explore our comprehensive cozy living room layouts with layered lighting with step-by-step room prep instructions and material specifications.",
+      "content_html": "",
+      "category": "Living Room Styling",
+      "category_slug": "living-room",
+      "parent_slug": "living-room",
+      "date": "2026-10-25",
+      "modified": "2026-10-25",
+      "image_url": "",
+      "local_image_path": "/assets/images/cozy-living-room-layout.svg",
+      "image_width": 1200,
+      "image_height": 750,
+      "custom_edited": false,
+      "checklist": [
+        {
+          "id": "cozy-living-room-layout-1",
+          "text": "Measure room dimensions and wall clearances",
+          "checked": false
+        },
+        {
+          "id": "cozy-living-room-layout-2",
+          "text": "Select cohesive neutral palette and hardware finishes",
+          "checked": false
+        },
+        {
+          "id": "cozy-living-room-layout-3",
+          "text": "Install ambient 2700K lighting to highlight architectural lines",
+          "checked": false
+        }
+      ],
+      "takeaways": [
+        "Plan measurements carefully before starting your living room styling layout.",
+        "Combine concealed storage with warm natural textures for a cohesive finish."
+      ],
+      "domain": "stylesdays.com",
+      "raw_meta": {}
+    }
+  },
+  "categories": [
+    {
+      "name": "IKEA Hacks",
+      "slug": "ikea-hacks"
+    },
+    {
+      "name": "Closet Storage",
+      "slug": "closet-storage"
+    },
+    {
+      "name": "Bedroom Ideas",
+      "slug": "bedroom-design"
+    },
+    {
+      "name": "Living Room Styling",
+      "slug": "living-room"
+    }
+  ]
 }

@@ -28,7 +28,9 @@
   --font-mono: 'JetBrains Mono', 'Fira Code', Menlo, Consolas, monospace;
 }
 
-*, *::before, *::after {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
@@ -56,16 +58,6 @@ body {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
 }
 
-.header-container {
-  max-width: 1440px;
-  margin: 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 1rem;
-}
-
 .brand-section {
   display: flex;
   align-items: center;
@@ -91,14 +83,6 @@ body {
   font-weight: 700;
   color: var(--text-primary);
   letter-spacing: -0.02em;
-}
-
-.brand-subtitle {
-  font-size: 0.7rem;
-  font-weight: 500;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
 }
 
 .brand-divider {
@@ -181,67 +165,6 @@ body {
   gap: 1rem;
 }
 
-.status-indicator {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0.25rem 0.65rem;
-  border-radius: 9999px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  background-color: rgba(16, 185, 129, 0.15);
-  color: var(--accent-emerald);
-  border: 1px solid rgba(16, 185, 129, 0.3);
-}
-
-.status-dot {
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 9999px;
-  background-color: var(--accent-emerald);
-  box-shadow: 0 0 8px var(--accent-emerald);
-}
-
-/* Tab Navigation */
-.tabs-nav {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-  background-color: rgba(15, 23, 42, 0.6);
-  padding: 0.25rem;
-  border-radius: 0.625rem;
-  border: 1px solid var(--border-color);
-  overflow-x: auto;
-}
-
-.tab-btn {
-  background: none;
-  border: none;
-  color: var(--text-secondary);
-  font-family: inherit;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  padding: 0.45rem 0.85rem;
-  border-radius: 0.45rem;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  white-space: nowrap;
-  transition: all 0.15s ease;
-}
-
-.tab-btn:hover {
-  color: var(--text-primary);
-  background-color: rgba(255, 255, 255, 0.06);
-}
-
-.tab-btn.active {
-  color: #fff;
-  background-color: var(--accent-red);
-  box-shadow: 0 2px 6px rgba(230, 0, 35, 0.3);
-}
-
 /* Main Container */
 .app-main {
   max-width: 1440px;
@@ -273,7 +196,7 @@ body {
 }
 
 @media (min-width: 1024px) {
-  .dashboard-grid.two-cols {
+.dashboard-grid.two-cols {
     grid-template-columns: repeat(2, 1fr);
   }
   .dashboard-grid.three-cols {
@@ -307,50 +230,6 @@ body {
   gap: 0.5rem;
 }
 
-.card-desc {
-  font-size: 0.8125rem;
-  color: var(--text-secondary);
-  margin-top: 0.25rem;
-}
-
-/* Metric / Stats Badges */
-.stats-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 1rem;
-  margin-bottom: 1.5rem;
-}
-
-.stat-card {
-  background-color: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: 0.75rem;
-  padding: 1rem 1.25rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.stat-label {
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-secondary);
-}
-
-.stat-value {
-  font-size: 1.75rem;
-  font-weight: 800;
-  color: var(--text-primary);
-  font-feature-settings: "tnum";
-}
-
-.stat-card.new .stat-value { color: var(--accent-emerald); }
-.stat-card.updated .stat-value { color: var(--accent-amber); }
-.stat-card.synced .stat-value { color: var(--accent-blue); }
-.stat-card.custom .stat-value { color: var(--accent-purple); }
-
 /* Form Controls */
 .form-group {
   margin-bottom: 1.25rem;
@@ -362,12 +241,6 @@ body {
   font-weight: 600;
   color: var(--text-primary);
   margin-bottom: 0.35rem;
-}
-
-.form-hint {
-  font-size: 0.75rem;
-  color: var(--text-muted);
-  margin-top: 0.25rem;
 }
 
 .form-control {
@@ -531,7 +404,7 @@ textarea.form-control {
 }
 
 @media (min-width: 1024px) {
-  .preview-layout {
+.preview-layout {
     grid-template-columns: 380px 1fr;
   }
 }
@@ -638,7 +511,6 @@ textarea.form-control {
 
 .terminal-body .log-info { color: #60A5FA; }
 .terminal-body .log-success { color: #34D399; }
-.terminal-body .log-warn { color: #FBBF24; }
 .terminal-body .log-error { color: #F87171; }
 
 /* Modal Editor */
@@ -703,68 +575,6 @@ textarea.form-control {
   to { transform: translateX(0); opacity: 1; }
 }
 
-/* ==========================================================================
-   Multi-Cloud & Space-Optimized Components
-   ========================================================================== */
-
-/* Subtabs Segmented Bar */
-.subtabs-bar {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  background-color: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  padding: 0.35rem;
-  border-radius: 0.75rem;
-  margin-bottom: 1.5rem;
-  overflow-x: auto;
-}
-
-.subtab-btn {
-  background: none;
-  border: none;
-  color: var(--text-secondary);
-  font-family: inherit;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  padding: 0.55rem 1.1rem;
-  border-radius: 0.5rem;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  white-space: nowrap;
-  transition: all 0.2s ease;
-}
-
-.subtab-btn:hover {
-  color: var(--text-primary);
-  background-color: rgba(255, 255, 255, 0.05);
-}
-
-.subtab-btn.active {
-  color: #fff;
-  background-color: #243248;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-  border: 1px solid #3B82F6;
-}
-
-.subtab-dot {
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 9999px;
-  display: inline-block;
-}
-
-.subtab-content {
-  display: none;
-}
-
-.subtab-content.active {
-  display: block;
-  animation: fadeIn 0.2s ease;
-}
-
 /* Eye Password Toggle Button */
 .eye-toggle-btn {
   position: absolute;
@@ -781,132 +591,6 @@ textarea.form-control {
 
 .eye-toggle-btn:hover {
   color: var(--text-primary);
-}
-
-/* Edge & Meta Preview Boxes */
-.edge-preview-box {
-  background: rgba(243, 128, 32, 0.08);
-  border: 1px solid rgba(243, 128, 32, 0.3);
-  border-radius: 0.75rem;
-  padding: 0.85rem;
-  margin-top: 0.75rem;
-}
-
-.cockpit-meta-box {
-  background: rgba(15, 23, 42, 0.75);
-  border: 1px solid var(--border-color);
-  border-radius: 0.6rem;
-  padding: 0.65rem 0.85rem;
-  font-size: 0.8rem;
-  color: var(--text-secondary);
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-
-/* Cloudflare Feature List */
-.cf-feature-list {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.cf-feature-item {
-  display: flex;
-  gap: 0.85rem;
-  align-items: flex-start;
-  font-size: 0.825rem;
-}
-
-.cf-feature-item strong {
-  color: var(--text-primary);
-  display: block;
-  margin-bottom: 0.15rem;
-}
-
-.cf-feature-item p {
-  color: var(--text-secondary);
-  line-height: 1.45;
-}
-
-.cf-feature-icon {
-  font-size: 1.25rem;
-  line-height: 1;
-}
-
-/* Multi-Cloud Cockpit */
-.cockpit-banner {
-  background: linear-gradient(135deg, rgba(243, 128, 32, 0.12) 0%, rgba(137, 87, 229, 0.12) 100%);
-  border: 1px solid rgba(243, 128, 32, 0.3);
-  border-radius: 1rem;
-  padding: 1.25rem 1.75rem;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1.5rem;
-  margin-bottom: 1.5rem;
-  flex-wrap: wrap;
-}
-
-.cockpit-title {
-  font-size: 1.25rem;
-  font-weight: 700;
-  color: var(--text-primary);
-  letter-spacing: -0.01em;
-}
-
-.cockpit-subtitle {
-  font-size: 0.825rem;
-  color: var(--text-secondary);
-  margin-top: 0.2rem;
-}
-
-.cockpit-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 1.25rem;
-}
-
-@media (min-width: 1024px) {
-  .cockpit-grid {
-    grid-template-columns: repeat(3, 1fr);
-  }
-}
-
-/* Card Variations */
-.card-cloudflare {
-  border-top: 3px solid var(--accent-cloudflare);
-}
-
-.card-github {
-  border-top: 3px solid var(--accent-github);
-}
-
-.card-compiler {
-  border-top: 3px solid var(--accent-emerald);
-}
-
-/* Badges */
-.badge-cf {
-  background: rgba(243, 128, 32, 0.2);
-  color: #FB923C;
-  font-size: 0.65rem;
-  font-weight: 800;
-  padding: 0.2rem 0.5rem;
-  border-radius: 9999px;
-  letter-spacing: 0.05em;
-  border: 1px solid rgba(243, 128, 32, 0.4);
-}
-
-.badge-status {
-  background: rgba(16, 185, 129, 0.2);
-  color: #34D399;
-  font-size: 0.65rem;
-  font-weight: 800;
-  padding: 0.2rem 0.5rem;
-  border-radius: 9999px;
-  letter-spacing: 0.05em;
-  border: 1px solid rgba(16, 185, 129, 0.4);
 }
 
 /* Buttons */
@@ -929,49 +613,6 @@ textarea.form-control {
 .btn-cloudflare:hover {
   background-color: var(--accent-cloudflare-hover);
   transform: translateY(-1px);
-}
-
-.btn-dual {
-  background: linear-gradient(135deg, var(--accent-cloudflare) 0%, var(--accent-github) 100%);
-  color: #fff;
-  border: none;
-  font-weight: 700;
-  padding: 0.65rem 1.25rem;
-  border-radius: 0.6rem;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  box-shadow: 0 4px 14px rgba(243, 128, 32, 0.35);
-  transition: all 0.2s ease;
-}
-
-.btn-dual:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 18px rgba(243, 128, 32, 0.5);
-}
-
-/* Status Indicators */
-.status-indicator.cf {
-  background-color: rgba(243, 128, 32, 0.15);
-  color: #FB923C;
-  border-color: rgba(243, 128, 32, 0.3);
-}
-
-.status-indicator.cf-inactive {
-  background-color: rgba(148, 163, 184, 0.1);
-  color: #94A3B8;
-  border-color: rgba(148, 163, 184, 0.2);
-}
-
-.status-indicator.cf-inactive .status-dot.cf-dot {
-  background-color: #64748B;
-  box-shadow: none;
-}
-
-.status-dot.cf-dot {
-  background-color: var(--accent-cloudflare);
-  box-shadow: 0 0 8px var(--accent-cloudflare);
 }
 
 /* Terminal Filters */
@@ -1087,40 +728,6 @@ textarea.form-control {
   overflow: hidden;
 }
 
-.mockup-header {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  padding-bottom: 0.4rem;
-  margin-bottom: 0.5rem;
-}
-
-.mockup-dot {
-  width: 0.45rem;
-  height: 0.45rem;
-  border-radius: 50%;
-}
-
-.mockup-hero {
-  border: 1px dashed rgba(0, 0, 0, 0.15);
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-
-.theme-title {
-  font-size: 1rem;
-  font-weight: 700;
-  color: #F8FAFC;
-  margin-bottom: 0.2rem;
-}
-
-.theme-desc {
-  font-size: 0.78rem;
-  color: var(--text-secondary);
-  line-height: 1.45;
-  margin-bottom: 0.6rem;
-}
-
 .theme-swatches {
   display: flex;
   align-items: center;
@@ -1134,27 +741,6 @@ textarea.form-control {
   border: 1px solid rgba(255, 255, 255, 0.2);
   display: inline-block;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-}
-
-.theme-features {
-  font-size: 0.75rem;
-  color: #94A3B8;
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.theme-features li {
-  list-style: none;
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-}
-
-.theme-features li::before {
-  content: "•";
-  color: #38BDF8;
-  font-weight: bold;
 }
 
 /* Routing Cards */
@@ -1189,13 +775,6 @@ textarea.form-control {
   box-shadow: 0 0 0 1px #10B981, 0 8px 20px rgba(16, 185, 129, 0.15);
 }
 
-.routing-card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 0.4rem;
-}
-
 .routing-badge {
   font-size: 0.65rem;
   font-weight: 700;
@@ -1205,18 +784,6 @@ textarea.form-control {
   background: rgba(59, 130, 246, 0.15);
   color: #60A5FA;
   border: 1px solid rgba(59, 130, 246, 0.3);
-}
-
-.routing-best-for {
-  font-size: 0.7rem;
-  font-weight: 600;
-  color: #34D399;
-}
-
-.routing-title {
-  font-size: 0.92rem;
-  font-weight: 700;
-  color: #F8FAFC;
 }
 
 .routing-tree {
@@ -1229,30 +796,6 @@ textarea.form-control {
   color: #E2E8F0;
   overflow-x: auto;
   white-space: nowrap;
-}
-
-.tree-root { color: #94A3B8; }
-.tree-slug { color: #FBBF24; font-weight: 600; }
-.tree-file { color: #64748B; }
-
-.routing-url-preview {
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
-  color: #94A3B8;
-  word-break: break-all;
-  line-height: 1.35;
-}
-
-.routing-url-preview strong {
-  color: #38BDF8;
-}
-
-.routing-crumbs {
-  font-size: 0.72rem;
-  color: #64748B;
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
 }
 
 /* Template Preview Large Modal */
@@ -1295,146 +838,17 @@ textarea.form-control {
   transition: width 0.25s ease;
 }
 
-
 /* ==========================================================================
    PLATFORM DIVISION REDESIGN & HIGH-DENSITY ENTERPRISE SAAS STYLES
    ========================================================================== */
 
 /* Widescreen App Layout Expansion */
-.header-container,
 .stepper-container,
 .app-main {
   max-width: 1680px !important;
   width: 96% !important;
   margin-left: auto !important;
   margin-right: auto !important;
-}
-
-/* Secondary Navigation Bar in Header */
-.nav-bar-container {
-  max-width: 1680px;
-  width: 96%;
-  margin: 0.75rem auto 0 auto;
-  padding-top: 0.5rem;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  overflow-x: auto;
-}
-
-.tabs-nav {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  width: 100%;
-}
-
-.tab-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.55rem 1rem;
-  border-radius: 0.6rem;
-  font-size: 0.825rem;
-  font-weight: 600;
-  transition: all 0.2s ease;
-  white-space: nowrap;
-}
-
-.tab-badge {
-  font-family: var(--font-mono);
-  font-size: 0.65rem;
-  font-weight: 700;
-  padding: 0.15rem 0.4rem;
-  border-radius: 0.35rem;
-  background: rgba(255, 255, 255, 0.1);
-  color: var(--text-secondary);
-}
-
-.tab-btn.active .tab-badge {
-  background: rgba(255, 255, 255, 0.25);
-  color: #fff;
-}
-
-.tab-badge.cf-badge {
-  background: rgba(243, 128, 32, 0.2);
-  color: #FB923C;
-}
-
-.tab-badge.gh-badge {
-  background: rgba(139, 92, 246, 0.2);
-  color: #C4B5FD;
-}
-
-/* Platform Division Segmented Switcher */
-.platform-switcher {
-  display: flex;
-  align-items: center;
-  background-color: #0A0F1D;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 0.75rem;
-  padding: 0.25rem;
-  gap: 0.35rem;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-}
-
-.platform-btn {
-  background: none;
-  border: 1px solid transparent;
-  color: var(--text-secondary);
-  font-family: inherit;
-  font-size: 0.8rem;
-  font-weight: 700;
-  padding: 0.45rem 0.95rem;
-  border-radius: 0.55rem;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-  white-space: nowrap;
-}
-
-.platform-btn:hover {
-  color: var(--text-primary);
-  background-color: rgba(255, 255, 255, 0.05);
-}
-
-.platform-btn.active.cf-btn {
-  color: #fff;
-  background: linear-gradient(135deg, rgba(243, 128, 32, 0.25) 0%, rgba(243, 128, 32, 0.1) 100%);
-  border-color: rgba(243, 128, 32, 0.6);
-  box-shadow: 0 0 12px rgba(243, 128, 32, 0.25);
-}
-
-.platform-btn.active.gh-btn {
-  color: #fff;
-  background: linear-gradient(135deg, rgba(137, 87, 229, 0.25) 0%, rgba(137, 87, 229, 0.1) 100%);
-  border-color: rgba(137, 87, 229, 0.6);
-  box-shadow: 0 0 12px rgba(137, 87, 229, 0.25);
-}
-
-.platform-btn.active.dual-btn {
-  color: #fff;
-  background: linear-gradient(135deg, rgba(16, 185, 129, 0.25) 0%, rgba(59, 130, 246, 0.2) 100%);
-  border-color: rgba(16, 185, 129, 0.6);
-  box-shadow: 0 0 12px rgba(16, 185, 129, 0.25);
-}
-
-.platform-pill {
-  font-size: 0.625rem;
-  font-weight: 800;
-  text-transform: uppercase;
-  padding: 0.1rem 0.4rem;
-  border-radius: 9999px;
-  background: rgba(255, 255, 255, 0.08);
-  letter-spacing: 0.04em;
-}
-
-.platform-btn.active .platform-pill {
-  background: rgba(255, 255, 255, 0.2);
-  color: #fff;
 }
 
 /* Interactive 4-Step Progressive Pipeline Stepper */
@@ -1482,12 +896,6 @@ textarea.form-control {
   box-shadow: 0 0 12px rgba(56, 189, 248, 0.15);
 }
 
-.step-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
 .step-badge {
   font-family: var(--font-mono);
   font-size: 0.625rem;
@@ -1501,11 +909,6 @@ textarea.form-control {
   color: #38BDF8;
 }
 
-.step-status-icon {
-  font-size: 0.7rem;
-  color: var(--accent-emerald);
-}
-
 .step-title {
   font-size: 0.85rem;
   font-weight: 700;
@@ -1513,24 +916,11 @@ textarea.form-control {
   letter-spacing: -0.01em;
 }
 
-.step-desc {
-  font-size: 0.7rem;
-  color: var(--text-secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .step-connector {
   width: 20px;
   height: 2px;
   background-color: var(--border-color);
   justify-self: center;
-}
-
-/* Executive KPI Ribbon Platform Target Link */
-.platform-target-card {
-  border-left: 3px solid var(--accent-cloudflare);
 }
 
 .target-link {
@@ -1547,139 +937,14 @@ textarea.form-control {
   text-decoration: underline !important;
 }
 
-/* Platform Hero Banners */
-.platform-hero-banner {
-  border-radius: 1rem;
-  padding: 1.5rem 2rem;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1.5rem;
-  margin-bottom: 1.5rem;
-  flex-wrap: wrap;
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
-}
-
-.platform-hero-banner.cf-banner {
-  background: linear-gradient(135deg, rgba(243, 128, 32, 0.18) 0%, rgba(15, 23, 42, 0.95) 100%);
-  border: 1px solid rgba(243, 128, 32, 0.4);
-  border-left: 5px solid var(--accent-cloudflare);
-}
-
-.platform-hero-banner.gh-banner {
-  background: linear-gradient(135deg, rgba(137, 87, 229, 0.18) 0%, rgba(15, 23, 42, 0.95) 100%);
-  border: 1px solid rgba(137, 87, 229, 0.4);
-  border-left: 5px solid var(--accent-github);
-}
-
-.hero-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-  padding: 0.2rem 0.65rem;
-  border-radius: 9999px;
-  font-size: 0.68rem;
-  font-weight: 800;
-  letter-spacing: 0.05em;
-  background: rgba(243, 128, 32, 0.2);
-  color: #FB923C;
-  border: 1px solid rgba(243, 128, 32, 0.4);
-  margin-bottom: 0.5rem;
-}
-
-.hero-tag.gh-tag {
-  background: rgba(137, 87, 229, 0.2);
-  color: #C4B5FD;
-  border-color: rgba(137, 87, 229, 0.4);
-}
-
-.hero-tag .dot {
-  width: 0.45rem;
-  height: 0.45rem;
-  border-radius: 50%;
-  background-color: var(--accent-cloudflare);
-  box-shadow: 0 0 6px var(--accent-cloudflare);
-}
-
-.hero-tag.gh-tag .dot {
-  background-color: var(--accent-github);
-  box-shadow: 0 0 6px var(--accent-github);
-}
-
-.hero-title {
-  font-size: 1.35rem;
-  font-weight: 800;
-  color: #fff;
-  letter-spacing: -0.02em;
-}
-
-.hero-desc {
-  font-size: 0.85rem;
-  color: var(--text-secondary);
-  max-width: 800px;
-  line-height: 1.5;
-  margin-top: 0.35rem;
-}
-
-.hero-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-}
-
-/* 4-Step Guided Execution Grid */
-.guided-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 1.25rem;
-  margin-bottom: 1.5rem;
-}
-
 @media (max-width: 1024px) {
-  .guided-grid {
-    grid-template-columns: 1fr;
-  }
-  .pipeline-stepper {
+.pipeline-stepper {
     grid-template-columns: 1fr;
     gap: 0.5rem;
   }
   .step-connector {
     display: none;
   }
-}
-
-.card-step-header {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.85rem;
-  padding-bottom: 0.85rem;
-  margin-bottom: 1rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.step-num {
-  font-family: var(--font-mono);
-  font-size: 1.1rem;
-  font-weight: 800;
-  padding: 0.25rem 0.55rem;
-  border-radius: 0.5rem;
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--text-secondary);
-  line-height: 1;
-  flex-shrink: 0;
-}
-
-.step-num.cf-num {
-  background: rgba(243, 128, 32, 0.2);
-  color: #FB923C;
-  border: 1px solid rgba(243, 128, 32, 0.4);
-}
-
-.step-num.gh-num {
-  background: rgba(137, 87, 229, 0.2);
-  color: #C4B5FD;
-  border: 1px solid rgba(137, 87, 229, 0.4);
 }
 
 .token-pill {
@@ -1698,51 +963,6 @@ textarea.form-control {
   padding: 0.65rem 0.85rem;
   border-radius: 0.5rem;
   line-height: 1.45;
-}
-
-.highlight-card {
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
-  background: linear-gradient(135deg, rgba(30, 41, 59, 0.9) 0%, rgba(15, 23, 42, 0.95) 100%);
-}
-
-.deploy-action-box {
-  background: rgba(0, 0, 0, 0.3);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 0.75rem;
-  padding: 1.25rem;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.deploy-meta-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  font-size: 0.85rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  padding-bottom: 0.75rem;
-}
-
-.deploy-target-url a {
-  font-family: var(--font-mono);
-  color: var(--accent-cloudflare);
-  text-decoration: none;
-  font-weight: 600;
-}
-
-.deploy-target-url a:hover {
-  text-decoration: underline;
-}
-
-.deploy-controls-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 1rem;
 }
 
 .btn-lg {
@@ -1794,19 +1014,6 @@ textarea.form-control {
   padding-top: 0.35rem;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
   flex-wrap: wrap;
-}
-
-/* Platform Switcher Split Button */
-.platform-btn.split-btn.active {
-  color: #fff;
-  background: linear-gradient(135deg, rgba(56, 189, 248, 0.25) 0%, rgba(137, 87, 229, 0.25) 100%);
-  border-color: rgba(56, 189, 248, 0.6);
-  box-shadow: 0 0 12px rgba(56, 189, 248, 0.25);
-}
-
-.tab-badge.split-badge {
-  background: rgba(56, 189, 248, 0.2);
-  color: #38BDF8;
 }
 
 /* Compact Inline Telemetry Ribbon */
@@ -1878,29 +1085,6 @@ textarea.form-control {
   padding-bottom: 0.85rem !important;
 }
 
-/* Calculated 58% / 42% Single Platform Cockpit Grid */
-.cockpit-split-grid {
-  display: grid;
-  grid-template-columns: 58% calc(42% - 1.25rem);
-  gap: 1.25rem;
-  align-items: start;
-}
-
-/* Calculated 50% / 50% Side-by-Side Split Cockpit Grid */
-.side-by-side-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1.25rem;
-  align-items: start;
-}
-
-@media (max-width: 1024px) {
-  .cockpit-split-grid,
-  .side-by-side-grid {
-    grid-template-columns: 1fr !important;
-  }
-}
-
 /* Compact Cards */
 .compact-card {
   padding: 0.85rem 1.15rem !important;
@@ -1956,52 +1140,6 @@ textarea.form-control {
   font-size: 0.8rem !important;
 }
 
-/* Compact Edge & Destination Boxes */
-.compact-edge-box {
-  padding: 0.6rem 0.85rem !important;
-  border-radius: 0.6rem !important;
-}
-
-.edge-url-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: 0.25rem;
-  gap: 0.5rem;
-}
-
-.open-link-btn {
-  font-size: 0.72rem;
-  font-weight: 700;
-  padding: 0.18rem 0.55rem;
-  border-radius: 0.35rem;
-  text-decoration: none;
-  border: 1px solid var(--accent-cloudflare);
-  color: var(--accent-cloudflare);
-  background: rgba(243, 128, 32, 0.1);
-  transition: all 0.15s ease;
-}
-
-.open-link-btn:hover {
-  background: var(--accent-cloudflare);
-  color: #fff;
-}
-
-.section-meta-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 0.78rem;
-  color: var(--text-secondary);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  padding-bottom: 0.35rem;
-}
-
-.compact-deploy-box {
-  padding: 0.75rem 0.95rem !important;
-  border-radius: 0.65rem !important;
-}
-
 /* Button Sizing Utilities */
 .btn-xs {
   padding: 0.22rem 0.55rem !important;
@@ -2014,19 +1152,6 @@ textarea.form-control {
   padding: 0.55rem 1.25rem !important;
   font-size: 0.85rem !important;
   font-weight: 700 !important;
-}
-
-/* Split Hero Bar */
-.split-hero-bar {
-  background: linear-gradient(135deg, rgba(243, 128, 32, 0.15) 0%, rgba(137, 87, 229, 0.15) 100%);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 0.75rem;
-  padding: 0.65rem 1.15rem;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 0.75rem;
 }
 
 /* Compact Brand & Logo Quick Banner */
@@ -2097,8 +1222,6 @@ textarea.form-control {
   transition: height 0.25s ease;
 }
 
-/* ========================================================================= */
-/* 13. TOP-RIGHT PLATFORM SETTINGS MODAL & STREAMLINED DEPLOY COCKPIT        */
 /* ========================================================================= */
 
 .settings-modal-overlay {
@@ -2243,22 +1366,6 @@ textarea.form-control {
   display: block;
 }
 
-/* Deploy Cockpit Top Bar */
-.deploy-hero-bar {
-  background: rgba(15, 23, 42, 0.75);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
-  padding: 0.75rem 1.25rem;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 0.85rem;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-}
-
-/* ========================================================================= */
-/* 15. PROFESSIONAL SAAS WORKSPACE & DEDICATED PLATFORM LAYOUT             */
 /* ========================================================================= */
 
 .platform-workspace {
@@ -2269,63 +1376,6 @@ textarea.form-control {
   margin: 0 auto;
   width: 100%;
   animation: fadeIn 0.2s ease-in-out;
-}
-
-.platform-hero-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  background: linear-gradient(135deg, rgba(15, 23, 42, 0.8) 0%, rgba(30, 41, 59, 0.5) 100%);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 14px;
-  padding: 1.15rem 1.4rem;
-  backdrop-filter: blur(12px);
-  gap: 1rem;
-}
-
-.platform-hero-info {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-
-.platform-hero-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.platform-hero-tag.cf-tag {
-  color: #FB923C;
-}
-
-.platform-hero-tag.gh-tag {
-  color: #C084FC;
-}
-
-.platform-hero-title {
-  font-size: 1.35rem;
-  font-weight: 800;
-  color: #F8FAFC;
-  margin: 0;
-  letter-spacing: -0.02em;
-}
-
-.platform-hero-desc {
-  font-size: 0.82rem;
-  color: #94A3B8;
-  margin: 0;
-}
-
-.platform-hero-meta {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 0.5rem;
 }
 
 /* SaaS Cockpit Card */
@@ -2341,133 +1391,6 @@ textarea.form-control {
   width: 100%;
 }
 
-/* Destination Hero Banner */
-.destination-hero-banner {
-  border-radius: 12px;
-  padding: 1.15rem 1.25rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.destination-hero-banner.cf-banner {
-  background: rgba(249, 115, 22, 0.06);
-  border: 1px solid rgba(249, 115, 22, 0.25);
-}
-
-.destination-hero-banner.gh-banner {
-  background: rgba(168, 85, 247, 0.06);
-  border: 1px solid rgba(168, 85, 247, 0.25);
-}
-
-.destination-hero-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.destination-label {
-  font-size: 0.76rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: #FB923C;
-}
-
-.destination-url-box {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 1rem;
-}
-
-.destination-url-link {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 1.15rem;
-  font-weight: 700;
-  color: #38BDF8;
-  text-decoration: none;
-  word-break: break-all;
-  transition: color 0.15s ease;
-}
-
-.destination-url-link:hover {
-  color: #7DD3FC;
-  text-decoration: underline;
-}
-
-.btn-copy-url {
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 6px;
-  padding: 0.35rem 0.65rem;
-  color: #E2E8F0;
-  font-size: 0.75rem;
-  font-weight: 600;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: all 0.15s ease;
-}
-
-.btn-copy-url:hover {
-  background: rgba(255, 255, 255, 0.15);
-  color: #FFF;
-}
-
-/* Specs Strip */
-.saas-specs-strip {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 1rem;
-  background: rgba(11, 17, 32, 0.6);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 10px;
-  padding: 0.85rem 1.15rem;
-}
-
-@media (max-width: 768px) {
-  .saas-specs-strip {
-    grid-template-columns: 1fr 1fr;
-  }
-}
-
-.spec-item {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-}
-
-.spec-label {
-  font-size: 0.7rem;
-  color: #64748B;
-  text-transform: uppercase;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-}
-
-.spec-value {
-  font-size: 0.85rem;
-  color: #F1F5F9;
-}
-
-.spec-value.highlight-cf {
-  color: #FB923C;
-}
-
-.spec-value.highlight-gh {
-  color: #C084FC;
-}
-
-.spec-code {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 0.8rem;
-  color: #94A3B8;
-  background: rgba(255, 255, 255, 0.04);
-  padding: 0.15rem 0.35rem;
-  border-radius: 4px;
-  align-self: flex-start;
-}
-
 /* Operations Grid (2 Balanced Columns) */
 .operations-grid {
   display: grid;
@@ -2476,7 +1399,7 @@ textarea.form-control {
 }
 
 @media (max-width: 860px) {
-  .operations-grid {
+.operations-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -2529,53 +1452,6 @@ textarea.form-control {
   margin-top: 0.15rem;
 }
 
-/* Settings Accordion */
-.saas-settings-accordion {
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 12px;
-  background: rgba(11, 17, 32, 0.4);
-  overflow: hidden;
-  transition: all 0.2s ease;
-}
-
-.saas-settings-accordion[open] {
-  border-color: rgba(255, 255, 255, 0.15);
-  background: rgba(11, 17, 32, 0.8);
-}
-
-.accordion-summary {
-  display: flex;
-  align-items: center;
-  padding: 0.85rem 1.15rem;
-  cursor: pointer;
-  user-select: none;
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: #E2E8F0;
-  gap: 0.65rem;
-  list-style: none;
-}
-
-.accordion-summary::-webkit-details-marker {
-  display: none;
-}
-
-.accordion-arrow {
-  margin-left: auto;
-  font-size: 0.7rem;
-  color: #64748B;
-  transition: transform 0.2s ease;
-}
-
-.saas-settings-accordion[open] .accordion-arrow {
-  transform: rotate(180deg);
-}
-
-.accordion-content {
-  padding: 1.15rem;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
-}
-
 /* Step Navigation Footer */
 .step-nav-footer {
   display: flex;
@@ -2584,72 +1460,4 @@ textarea.form-control {
   padding: 1.25rem 0;
   margin-top: 1rem;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
-}
-
-/* Single-Cadre Display Logic (Fixed: Flex-direction column prevents horizontal squishing) */
-.deploy-cockpit-grid.view-single-cf #cockpitCardCf {
-  display: flex !important;
-  flex-direction: column !important;
-  max-width: 960px;
-  margin: 0 auto;
-  width: 100%;
-}
-.deploy-cockpit-grid.view-single-cf #cockpitCardGh {
-  display: none !important;
-}
-
-.deploy-cockpit-grid.view-single-gh #cockpitCardGh {
-  display: flex !important;
-  flex-direction: column !important;
-  max-width: 960px;
-  margin: 0 auto;
-  width: 100%;
-}
-.deploy-cockpit-grid.view-single-gh #cockpitCardCf {
-  display: none !important;
-}
-
-.deploy-cockpit-grid.view-both {
-  display: grid !important;
-  grid-template-columns: 1fr 1fr !important;
-  gap: 1.25rem !important;
-}
-
-.deploy-cockpit-grid.view-both #cockpitCardCf,
-.deploy-cockpit-grid.view-both #cockpitCardGh {
-  display: flex !important;
-  flex-direction: column !important;
-  max-width: none;
-  margin: 0;
-  width: 100%;
-}
-
-/* Step 1 Deployment Target Platform Switcher & Isolated Cadres */
-.step1-platform-pill {
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: #94A3B8;
-  padding: 0.22rem 0.65rem;
-  font-size: 0.72rem;
-  font-weight: 600;
-  border-radius: 5px;
-  cursor: pointer;
-  transition: all 0.15s ease;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-}
-.step1-platform-pill:hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: #F1F5F9;
-}
-.step1-platform-pill.active.cf {
-  background: rgba(243, 128, 32, 0.15) !important;
-  border-color: #F97316 !important;
-  color: #FB923C !important;
-}
-.step1-platform-pill.active.gh {
-  background: rgba(168, 85, 247, 0.15) !important;
-  border-color: #A855F7 !important;
-  color: #C084FC !important;
 }

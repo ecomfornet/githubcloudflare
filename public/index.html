@@ -4,6 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>stylesdays pSEO Multi-Cloud Hub — Cloudflare &amp; GitHub</title>
+  <meta name="description" content="Multi-cloud programmatic SEO static site generator and management dashboard for Cloudflare Workers and GitHub Pages.">
+  <meta property="og:title" content="stylesdays pSEO Multi-Cloud Hub">
+  <meta property="og:description" content="Multi-cloud programmatic SEO static site generator and management dashboard for Cloudflare Workers and GitHub Pages.">
   
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
@@ -45,39 +48,6 @@
         <button type="button" id="btnOpenSettings" class="btn btn-primary btn-sm" title="Open Cloudflare &amp; GitHub Platform Settings" style="display: inline-flex; align-items: center; gap: 0.35rem; font-weight: 600;">
           <span>⚙️ Settings</span>
         </button>
-
-        <!-- Hidden elements for test and script compatibility -->
-        <div style="display: none;" aria-hidden="true">
-          <div id="cfStatusBadge" class="status-indicator cf" title="Cloudflare Workers Edge Status · Click to configure" style="cursor: pointer;">
-            <span class="status-dot cf-dot"></span>
-            <span id="cfStatusText">Cloudflare: Ready</span>
-          </div>
-          <div id="gitStatusBadge" class="status-indicator" title="GitHub Pages Git Data Status · Click to configure" style="cursor: pointer;">
-            <span class="status-dot"></span>
-            <span id="gitStatusText">GitHub: Ready</span>
-          </div>
-          <button id="quickBuildBtn" class="btn btn-secondary btn-sm" title="Instant Static Site Rebuild">⚡ Quick Build</button>
-          <button type="button" id="platformSelectCf" data-platform="cloudflare"></button>
-          <button type="button" id="platformSelectGh" data-platform="github"></button>
-          <button type="button" id="platformSelectSplit" data-platform="split"></button>
-          <button type="button" id="platformSelectDual" data-platform="dual"></button>
-          <button class="tab-btn active" data-tab="tab-deploy" data-platform="cloudflare" id="tabBtnCloudflare"></button>
-          <button class="tab-btn" data-tab="tab-deploy" data-platform="github" id="tabBtnGithub"></button>
-          <button class="tab-btn" data-tab="tab-themes" id="tabBtnThemes"></button>
-          <button class="tab-btn" data-tab="tab-ingest" id="tabBtnIngest"></button>
-          <button class="tab-btn" data-tab="tab-posts" id="tabBtnPosts"></button>
-          <button class="tab-btn" data-tab="tab-preview" id="tabBtnPreview"></button>
-          <a id="cockpitCfUrlLink" href="#" target="_blank" rel="noopener"></a>
-          <a id="cockpitGhUrlLink" href="#" target="_blank" rel="noopener"></a>
-          <a id="cfLiveUrlPreview" href="#" target="_blank" rel="noopener"></a>
-          <strong id="cockpitCfWorker">—</strong>
-          <strong id="cockpitCfSubdomain">—</strong>
-          <strong id="cockpitTheme">pinterest-mag</strong>
-          <code id="cockpitOutputDir">dist/</code>
-          <a id="cockpitGhRepoText" href="#" target="_blank" rel="noopener"></a>
-          <strong id="cockpitGhRepo">—</strong>
-          <strong id="cockpitGhBranch">main</strong>
-        </div>
       </div>
     </div>
 
@@ -107,8 +77,6 @@
             —
           </a>
         </div>
-        <!-- Hidden elements for test & script compatibility -->
-        <span id="statUpdatedPosts" style="display: none;">0</span>
       </div>
     </div>
   </header>
@@ -136,11 +104,6 @@
           <span class="step-badge">04</span>
           <span class="step-title">Deploy</span>
         </div>
-        <!-- Hidden elements for backward compatibility -->
-        <span id="stepPlatformBadge" style="display: none;">04</span>
-        <span id="stepPlatformTitle" style="display: none;">Deploy Cockpit</span>
-        <span id="stepPlatformDesc" style="display: none;">Edge Deployment</span>
-        <div id="stepCardPlatform" data-target="tab-deploy" style="display: none;"></div>
       </div>
     </div>
   </section>
@@ -329,28 +292,6 @@
           </div>
         </div>
       </div>
-
-      <!-- Hidden compatibility elements for test runner & script integrity -->
-      <div style="display: none;">
-        <div id="deployCockpitGrid" class="deploy-cockpit-grid view-single-cf"></div>
-        <button type="button" id="viewToggleCf" data-view="cf"></button>
-        <button type="button" id="viewToggleGh" data-view="gh"></button>
-        <button type="button" id="viewToggleBoth" data-view="both"></button>
-        <button type="button" id="triggerDualDeployBtn"></button>
-        <button type="button" id="heroCfDeployBtn"></button>
-        <strong id="splitCfWorkerName">—</strong>
-        <button type="button" id="splitBtnBuildCf" onclick="document.getElementById('triggerBuildBtn').click();"></button>
-        <button type="button" id="splitBtnDeployCf" onclick="document.getElementById('triggerCfDeployBtn').click();"></button>
-        <button type="button" id="heroGhDeployBtn"></button>
-        <strong id="splitGhRepoName">—</strong>
-        <button type="button" id="splitBtnBuildGh" onclick="document.getElementById('triggerBuildGhBtn').click();"></button>
-        <button type="button" id="splitBtnDeployGh" onclick="document.getElementById('triggerDeployBtn').click();"></button>
-      </div>
-
-      <!-- Hidden compatibility stubs for legacy tab selectors -->
-      <div id="tab-cloudflare" style="display: none;"></div>
-      <div id="tab-github" style="display: none;"></div>
-      <div id="tab-split" style="display: none;"></div>
     </section>
 
     <!-- ================================================================= -->
@@ -557,11 +498,6 @@
           </div>
 
           <input type="hidden" id="cfgWpApiUrl" value="stylesdays.com">
-          <input type="file" id="logoFileInput" accept="image/png,image/jpeg,image/webp,image/svg+xml" style="display: none;">
-          <button type="button" id="btnResetLogo" style="display: none;">Reset Logo</button>
-          <div id="logoPreviewBox" style="display: none;"></div>
-          <span id="logoFilenameText" style="display: none;"></span>
-          <span id="logoStatusBadge" style="display: none;"></span>
 
           <div style="margin-top: 0.75rem;">
             <button type="submit" class="btn btn-primary btn-sm">💾 Save Settings</button>
@@ -942,9 +878,6 @@
               <span>Upload</span>
               <input type="file" id="previewLogoFileInput" accept="image/png,image/jpeg,image/webp,image/svg+xml" style="display: none;">
             </label>
-            <button type="button" id="previewBtnResetLogo" style="display: none;">Reset</button>
-            <span id="previewLogoStatusBadge" style="display: none;"></span>
-            <span id="previewLogoFilename" style="display: none;"></span>
           </div>
 
           <div class="dashboard-grid two-cols" style="gap: 0.5rem; margin-top: 0.5rem;">
@@ -1263,21 +1196,6 @@
             </div>
 
             <div id="ghStatusFeedback" class="feedback-box" style="display: none; margin-top: 0.5rem;"></div>
-
-            <!-- Hidden compatibility elements to guarantee zero script/test regressions -->
-            <div style="display: none;" aria-hidden="true">
-              <input type="text" id="cfgGithubOwner" value="">
-              <input type="text" id="cfgGithubRepo" value="">
-              <input type="checkbox" id="cfgGithubIsOrg" checked>
-              <input type="checkbox" id="cfgAutoRootOrg" checked>
-              <select id="selectGithubAccount"><option value="">Select account...</option></select>
-              <button type="button" id="btnRefreshOrgs"></button>
-              <button type="button" id="btnCheckCreateOrg"></button>
-              <button type="button" id="btnCreateRepoNow"></button>
-              <a id="linkOpenGithubOrg" href="#"></a>
-              <span id="rootDomainPreview">Target: —</span>
-              <div id="orgStatusFeedback"></div>
-            </div>
           </form>
         </div>
       </div>
