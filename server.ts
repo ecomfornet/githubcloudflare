@@ -7,6 +7,27 @@ const WORKSPACE_DIR = process.cwd();
 const PUBLIC_DIR = path.join(WORKSPACE_DIR, 'public');
 const ASSETS_DIR = path.join(WORKSPACE_DIR, 'assets');
 
+for (const envFile of ['.env', '.env.local']) {
+  const full = path.join(WORKSPACE_DIR, envFile);
+  if (fs.existsSync(full)) {
+    try {
+      for (const rawLine of fs.readFileSync(full, 'utf-8').split(/\r?\n/)) {
+        const line = rawLine.trim();
+        if (!line || line.startsWith('#')) continue;
+        const eq = line.indexOf('=');
+        if (eq <= 0) continue;
+        const key = line.slice(0, eq).trim();
+        const val = line.slice(eq + 1).trim().replace(/^['"]|['"]$/g, '');
+        if (key && !(key in process.env)) {
+          process.env[key] = val;
+        }
+      }
+    } catch {
+      // Ignore unreadable env files
+    }
+  }
+}
+
 const store = new DashboardStore({ workspaceDir: WORKSPACE_DIR });
 
 export function createApp() {
@@ -117,6 +138,28 @@ export function createApp() {
     res.json({ success: true, post: updated });
   });
 
+  app.post('/api/posts/:slug/deploy', async (req, res) => {
+    try {
+      const result = await store.deploySinglePost(req.params.slug, (req.body || {}) as Record<string, unknown>);
+      res.json(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const status = message.toLowerCase().includes('not found') ? 404 : 400;
+      res.status(status).json({ success: false, error: message });
+    }
+  });
+
+  app.delete('/api/posts/:slug', async (req, res) => {
+    try {
+      const result = await store.deletePost(req.params.slug, (req.body || {}) as Record<string, unknown>);
+      res.json(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const status = message.toLowerCase().includes('not found') ? 404 : 400;
+      res.status(status).json({ success: false, error: message });
+    }
+  });
+
   // --- Live Theme Preview ---
   app.post('/api/preview', (req, res) => {
     const body = (req.body || {}) as Record<string, unknown>;
@@ -137,7 +180,12 @@ export function createApp() {
   // --- Ingestion & Sitemap Scan ---
   app.post('/api/sitemap/scan', async (req, res) => {
     const body = (req.body || {}) as Record<string, unknown>;
-    const result = await store.scanSitemap(typeof body.url_or_list === 'string' ? body.url_or_list : undefined);
+    const parsedMax = body.max_posts !== undefined && body.max_posts !== '' ? Number(body.max_posts) : undefined;
+    const result = await store.scanSitemap(
+      typeof body.url_or_list === 'string' ? body.url_or_list : undefined,
+      typeof body.source_type === 'string' ? body.source_type : 'sitemap',
+      parsedMax !== undefined && Number.isFinite(parsedMax) ? parsedMax : undefined
+    );
     res.json(result);
   });
 
@@ -145,8 +193,18 @@ export function createApp() {
     res.json(store.startIngestJob((req.body || {}) as Record<string, unknown>));
   });
 
+  app.post('/api/ingest/stop', (_req, res) => {
+    res.json(store.stopIngestJob());
+  });
+
   app.get('/api/ingest/status', (_req, res) => {
     res.json(store.ingestJob);
+  });
+
+  app.post('/api/projects/clear', (req, res) => {
+    const body = (req.body || {}) as Record<string, unknown>;
+    const projectId = typeof body.project_id === 'string' ? body.project_id : undefined;
+    res.json(store.clearActiveProjectData(projectId));
   });
 
   // --- Static Build & Assets ---
@@ -166,7 +224,7 @@ export function createApp() {
     res.json(result);
   });
 
-  app.post('/api/assets/sync', (req, res) => {
+  app.post('/api/assets/sync', async (req, res) => {
     const body = (req.body || {}) as Record<string, unknown>;
     if (body.cf_custom_domain !== undefined || body.custom_domain !== undefined || body.cf_project_name !== undefined || body.worker_name !== undefined) {
       try {
@@ -175,12 +233,12 @@ export function createApp() {
         // Ignore if no active project
       }
     }
-    res.json(store.syncAllPostImages());
+    res.json(await store.syncAllPostImages());
   });
 
-  app.post('/api/images/optimize', (req, res) => {
+  app.post('/api/images/optimize', async (req, res) => {
     const body = (req.body || {}) as Record<string, unknown>;
-    res.json(store.optimizeAllImages(Number(body.quality || 82) || 82));
+    res.json(await store.optimizeAllImages(Number(body.quality || 82) || 82));
   });
 
   // --- Cloudflare Endpoints ---
@@ -205,6 +263,23 @@ export function createApp() {
         theme: typeof body.theme === 'string' ? body.theme : undefined,
       })
     );
+  });
+
+  app.post('/api/cloudflare/fetch-posts', async (req, res) => {
+    try {
+      const body = (req.body || {}) as Record<string, unknown>;
+      const result = await store.fetchLiveWorkerPosts({
+        workerUrl: typeof body.worker_url === 'string' ? body.worker_url : undefined,
+        subdomain:
+          typeof (body.subdomain || body.project_name || body.worker_name) === 'string'
+            ? String(body.subdomain || body.project_name || body.worker_name)
+            : undefined,
+        forceRefresh: Boolean(body.force_refresh),
+      });
+      res.json(result);
+    } catch (err) {
+      res.status(400).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+    }
   });
 
   // --- GitHub & Deploy Status ---
@@ -396,6 +471,10 @@ export function createApp() {
   app.use('/static', express.static(PUBLIC_DIR));
   app.use(express.static(PUBLIC_DIR));
 
+  app.get('/api/health', (_req, res) => {
+    res.json({ status: 'ok', uptime: process.uptime(), active_project: store.activeProjectId });
+  });
+
   app.get('/{*splat}', (_req, res) => {
     res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
   });
@@ -406,7 +485,31 @@ export function createApp() {
 const PORT = Number(process.env.PORT || 3000) || 3000;
 const HOST = '0.0.0.0';
 
+process.on('unhandledRejection', (reason) => {
+  console.error('[stylesdays pSEO Hub] Unhandled promise rejection:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[stylesdays pSEO Hub] Uncaught exception:', err);
+});
+
 const app = createApp();
-app.listen(PORT, HOST, () => {
+const server = app.listen(PORT, HOST, () => {
   console.log(`[stylesdays pSEO Hub] Server listening on http://${HOST}:${PORT}`);
 });
+
+server.on('error', (err: NodeJS.ErrnoException) => {
+  console.error(`[stylesdays pSEO Hub] Server failed to bind ${HOST}:${PORT}:`, err.message);
+  process.exit(1);
+});
+
+const shutdown = (signal: string) => {
+  console.log(`[stylesdays pSEO Hub] Received ${signal}, shutting down cleanly...`);
+  server.close(() => {
+    process.exit(0);
+  });
+  setTimeout(() => process.exit(0), 2000).unref();
+};
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));

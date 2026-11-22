@@ -31,7 +31,20 @@ import {
   renderCategoryIndexHtml,
   renderHubHtml,
   renderPostHtml,
+  renderStaticPageHtml,
 } from './templates.ts';
+import { buildTrustPages, resolveSiteIdentity } from './static-pages.ts';
+import * as cheerio from 'cheerio';
+import { deployCloudflareWorkersAssets, sanitizeWorkerScriptName } from './cloudflare-deployer.ts';
+import {
+  discoverUrlsFromSource,
+  fetchWpApiPosts,
+  localizeAndConvertPostImages,
+  optimizeDirectoryToWebp,
+  parseXmlSitemapEntries,
+  sanitizeEditedHtml,
+  scrapeArticleFromUrl,
+} from './scraper.ts';
 
 export interface StoreOptions {
   workspaceDir?: string;
@@ -53,6 +66,8 @@ export class DashboardStore {
   logs: string[];
   lastBuildTime: string;
   lastBuildFiles: number;
+  private ingestAbortController: AbortController | null;
+  private ingestStopRequested: boolean;
 
   constructor(options: StoreOptions = {}) {
     this.workspaceDir = path.resolve(options.workspaceDir || process.cwd());
@@ -61,6 +76,8 @@ export class DashboardStore {
     this.logs = [];
     this.lastBuildTime = '';
     this.lastBuildFiles = 0;
+    this.ingestAbortController = null;
+    this.ingestStopRequested = false;
     this.deployJob = this.createIdleDeployJob();
     this.ingestJob = this.createIdleIngestJob();
 
@@ -125,8 +142,20 @@ export class DashboardStore {
         try {
           const parsed = JSON.parse(fs.readFileSync(file, 'utf-8')) as Partial<AppConfig>;
           const merged: AppConfig = {
-            github: { ...base.github, ...(parsed.github || {}) },
-            cloudflare: { ...base.cloudflare, ...(parsed.cloudflare || {}) },
+            github: {
+              ...base.github,
+              ...(parsed.github || {}),
+              token: parsed.github?.token || '',
+              owner: parsed.github?.owner || base.github.owner,
+              repo: parsed.github?.repo || base.github.repo,
+            },
+            cloudflare: {
+              ...base.cloudflare,
+              ...(parsed.cloudflare || {}),
+              api_token: parsed.cloudflare?.api_token || '',
+              account_id: parsed.cloudflare?.account_id || '',
+              account_subdomain: parsed.cloudflare?.account_subdomain || base.cloudflare.account_subdomain,
+            },
             ingestion: { ...base.ingestion, ...(parsed.ingestion || {}) },
             build: { ...base.build, ...(parsed.build || {}) },
             dashboard: { ...base.dashboard, ...(parsed.dashboard || {}) },
@@ -154,6 +183,9 @@ export class DashboardStore {
         }
       }
     }
+    base.github.token = '';
+    base.cloudflare.api_token = '';
+    base.cloudflare.account_id = '';
     return base;
   }
 
@@ -432,7 +464,7 @@ export class DashboardStore {
     if (cfCustomDomain) this.config.cloudflare.custom_domain = cfCustomDomain;
     if (ghOwner) this.config.github.owner = ghOwner;
     if (ghRepo) this.config.github.repo = ghRepo;
-    if (sitemapUrl) this.config.ingestion.sitemap_url = sitemapUrl;
+    this.config.ingestion.sitemap_url = sitemapUrl;
     this.config.build.theme = theme;
     this.config.build.routing_mode = routingMode;
 
@@ -543,7 +575,7 @@ export class DashboardStore {
     this.config.cloudflare.custom_domain = item.cf_custom_domain || '';
     if (item.gh_owner) this.config.github.owner = item.gh_owner;
     if (item.gh_repo) this.config.github.repo = item.gh_repo;
-    if (item.sitemap_url) this.config.ingestion.sitemap_url = item.sitemap_url;
+    this.config.ingestion.sitemap_url = item.sitemap_url || '';
 
     this.saveConfig();
     this.log(`Switched active project to '${item.name}' (id=${pid}, ${Object.keys(this.manifest.posts).length} posts).`);
@@ -555,6 +587,119 @@ export class DashboardStore {
       total_posts: Object.keys(this.manifest.posts).length,
       categories_count: this.manifest.categories.length,
       message: `Switched to project '${item.name}'.`,
+    };
+  }
+
+  clearActiveProjectData(projectId?: string): Record<string, unknown> {
+    const pid = (projectId || this.activeProjectId || '').trim();
+    if (this.ingestJob.status === 'running') {
+      this.stopIngestJob();
+    }
+
+    const removedPosts = Object.keys(this.manifest.posts).length;
+    const removedCategories = this.manifest.categories.length;
+
+    // 1. Reset active manifest in memory & on disk
+    this.manifest = {
+      version: '2.0',
+      updated_at: new Date().toISOString(),
+      posts: {},
+      categories: [],
+    };
+    this.saveManifest();
+
+    // 2. Clean scraped_data/<pid>/html
+    const projHtmlDir = path.join(this.workspaceDir, 'scraped_data', pid, 'html');
+    if (fs.existsSync(projHtmlDir)) {
+      fs.rmSync(projHtmlDir, { recursive: true, force: true });
+      fs.mkdirSync(projHtmlDir, { recursive: true });
+    }
+
+    // 3. Collect image filenames still referenced by OTHER projects so we never break another project
+    const protectedFilenames = new Set<string>();
+    const customLogoPath = String(this.config.branding?.logo_path || '').trim();
+    if (customLogoPath) {
+      protectedFilenames.add(path.basename(customLogoPath));
+    }
+    for (const [otherId] of Object.entries(this.projects)) {
+      if (otherId === pid) continue;
+      try {
+        const otherManifest = this.loadManifestFile(this.resolveManifestPath(otherId));
+        for (const p of Object.values(otherManifest.posts || {})) {
+          if (p.local_image_path) {
+            protectedFilenames.add(path.basename(p.local_image_path));
+          }
+          if (p.content_html) {
+            for (const match of p.content_html.matchAll(/\/assets\/images\/([^"'\s>?#]+)/g)) {
+              protectedFilenames.add(path.basename(match[1]));
+            }
+          }
+        }
+      } catch {
+        // Ignore unreadable sibling manifest
+      }
+    }
+
+    let removedImages = 0;
+    const clearImagesDir = (dirPath: string, respectProtected: boolean) => {
+      const resolved = path.resolve(dirPath);
+      if (!resolved.startsWith(this.workspaceDir + path.sep) || !fs.existsSync(resolved)) return;
+      for (const entry of fs.readdirSync(resolved)) {
+        if (respectProtected && protectedFilenames.has(entry)) continue;
+        const abs = path.join(resolved, entry);
+        try {
+          if (fs.lstatSync(abs).isFile()) {
+            fs.unlinkSync(abs);
+            removedImages += 1;
+          }
+        } catch {
+          // Ignore locked/missing file
+        }
+      }
+    };
+
+    clearImagesDir(path.join(this.workspaceDir, 'assets', pid, 'images'), false);
+    clearImagesDir(path.join(this.workspaceDir, 'assets', 'images'), true);
+
+    // 4. Clean generated static build output for this project
+    let removedBuildFiles = 0;
+    const { outputDir } = this.resolveOutputDir();
+    const resolvedOut = path.resolve(outputDir);
+    if (
+      resolvedOut !== this.workspaceDir &&
+      resolvedOut.startsWith(this.workspaceDir + path.sep) &&
+      fs.existsSync(resolvedOut)
+    ) {
+      const countFilesRecursive = (dir: string): number => {
+        let count = 0;
+        for (const entry of fs.readdirSync(dir)) {
+          const full = path.join(dir, entry);
+          const st = fs.lstatSync(full);
+          if (st.isDirectory()) count += countFilesRecursive(full);
+          else count += 1;
+        }
+        return count;
+      };
+      removedBuildFiles = countFilesRecursive(resolvedOut);
+      fs.rmSync(resolvedOut, { recursive: true, force: true });
+    }
+
+    this.ingestJob = this.createIdleIngestJob();
+    this.lastBuildFiles = 0;
+    this.lastBuildTime = '';
+    this.saveConfig();
+
+    const message = `Cleared project '${pid}': removed ${removedPosts} post(s), ${removedCategories} categor${removedCategories === 1 ? 'y' : 'ies'}, ${removedImages} image asset(s), and ${removedBuildFiles} build file(s).`;
+    this.log(`[PROJECT] ${message}`);
+
+    return {
+      success: true,
+      project_id: pid,
+      removed_posts: removedPosts,
+      removed_categories: removedCategories,
+      removed_images: removedImages,
+      removed_build_files: removedBuildFiles,
+      message,
     };
   }
 
@@ -583,8 +728,8 @@ export class DashboardStore {
       new: this.ingestJob.counts.new || 0,
       custom_edited: customCount,
       categories_count: this.manifest.categories.length,
-      git_ready: Boolean(this.config.github.token && this.config.github.repo),
-      cloudflare_ready: Boolean(this.config.cloudflare.api_token || this.config.cloudflare.project_name),
+      git_ready: Boolean(this.getEffectiveGitHubToken() && this.config.github.repo),
+      cloudflare_ready: Boolean(this.getEffectiveCloudflareToken() || this.config.cloudflare.project_name),
       cloudflare_project: this.config.cloudflare.project_name,
       cloudflare_url: getCloudflareLiveUrl(this.config.cloudflare),
       theme: this.config.build.theme,
@@ -601,9 +746,38 @@ export class DashboardStore {
     };
   }
 
+  getEffectiveCloudflareToken(): string {
+    const raw =
+      this.config.cloudflare.api_token ||
+      process.env.CLOUDFLARE_API_TOKEN ||
+      process.env.CF_API_TOKEN ||
+      process.env.CLOUDFLARE_TOKEN ||
+      '';
+    return raw.trim().replace(/^Bearer\s+/i, '').replace(/^['"]|['"]$/g, '').trim();
+  }
+
+  getEffectiveCloudflareAccountId(): string {
+    const raw =
+      this.config.cloudflare.account_id ||
+      process.env.CLOUDFLARE_ACCOUNT_ID ||
+      process.env.CF_ACCOUNT_ID ||
+      '';
+    return raw.trim().replace(/^['"]|['"]$/g, '').trim();
+  }
+
+  getEffectiveGitHubToken(): string {
+    const raw =
+      this.config.github.token ||
+      process.env.GITHUB_TOKEN ||
+      process.env.GH_TOKEN ||
+      '';
+    return raw.trim().replace(/^Bearer\s+/i, '').replace(/^['"]|['"]$/g, '').trim();
+  }
+
   getConfigMasked(): Record<string, unknown> {
-    const ghToken = this.config.github.token;
-    const cfToken = this.config.cloudflare.api_token;
+    const ghToken = this.getEffectiveGitHubToken();
+    const cfToken = this.getEffectiveCloudflareToken();
+    const cfAccountId = this.getEffectiveCloudflareAccountId();
     const liveUrl = getCloudflareLiveUrl(this.config.cloudflare);
     return {
       ...this.config,
@@ -615,6 +789,7 @@ export class DashboardStore {
       },
       cloudflare: {
         ...this.config.cloudflare,
+        account_id: cfAccountId,
         has_token: Boolean(cfToken),
         token_masked: maskToken(cfToken),
         api_token: maskToken(cfToken),
@@ -641,9 +816,13 @@ export class DashboardStore {
     if (typeof gh.is_org === 'boolean') this.config.github.is_org = gh.is_org;
     if (typeof gh.base_path === 'string') this.config.github.base_path = gh.base_path.trim();
 
-    const newCfToken = typeof (cf.api_token || cf.token) === 'string' ? String(cf.api_token || cf.token).trim() : '';
+    const newCfToken = typeof (cf.api_token || cf.token) === 'string'
+      ? String(cf.api_token || cf.token).trim().replace(/^Bearer\s+/i, '').replace(/^['"]|['"]$/g, '').trim()
+      : '';
     if (newCfToken && !newCfToken.includes('****')) this.config.cloudflare.api_token = newCfToken;
-    if (typeof cf.account_id === 'string') this.config.cloudflare.account_id = cf.account_id.trim();
+    if (typeof cf.account_id === 'string') {
+      this.config.cloudflare.account_id = cf.account_id.trim().replace(/^['"]|['"]$/g, '').trim();
+    }
     if (typeof cf.account_subdomain === 'string') this.config.cloudflare.account_subdomain = cf.account_subdomain.trim();
     else if (typeof cf.subdomain === 'string') this.config.cloudflare.account_subdomain = cf.subdomain.trim();
     if (typeof cf.project_name === 'string') this.config.cloudflare.project_name = cf.project_name.trim();
@@ -739,9 +918,19 @@ export class DashboardStore {
     if (typeof data.title === 'string') post.title = data.title;
     if (typeof data.excerpt === 'string') post.excerpt = data.excerpt;
     else if (typeof data.description === 'string') post.excerpt = data.description;
-    if (typeof data.category === 'string') post.category = data.category;
-    if (typeof data.category_slug === 'string') post.category_slug = data.category_slug;
-    if (typeof data.parent_slug === 'string') post.parent_slug = data.parent_slug;
+    if (typeof data.content_html === 'string') {
+      post.content_html = sanitizeEditedHtml(data.content_html);
+    }
+    if (typeof data.category === 'string') {
+      post.category = data.category.trim();
+      if (typeof data.category_slug !== 'string' || !data.category_slug.trim()) {
+        post.category_slug = slugify(post.category || 'general');
+      }
+    }
+    if (typeof data.category_slug === 'string' && data.category_slug.trim()) {
+      post.category_slug = slugify(data.category_slug);
+    }
+    if (typeof data.parent_slug === 'string') post.parent_slug = data.parent_slug.trim();
     if (Array.isArray(data.takeaways)) {
       post.takeaways = data.takeaways.map((t) => String(t).trim()).filter(Boolean);
     }
@@ -779,6 +968,11 @@ export class DashboardStore {
     const isHub =
       opts.viewMode === 'hub' || ['__hub__', 'hub', 'index', 'home', '__home__'].includes(cleanSlug);
 
+    const activeProj = this.projects[this.activeProjectId];
+    const customDom = activeProj?.cf_custom_domain || this.config.cloudflare.custom_domain || '';
+    const projectName = this.config.cloudflare.project_name || this.activeProjectId || '';
+    const baseUrl = customDom ? `https://${stripProtocol(customDom)}` : getCloudflareLiveUrl(this.config.cloudflare);
+
     if (isHub) {
       const existing = Object.values(this.manifest.posts);
       const posts = existing.length > 0 ? existing : getSeedPosts();
@@ -791,6 +985,9 @@ export class DashboardStore {
         themeKey,
         branding: this.config.branding,
         routingMode,
+        baseUrl,
+        customDomain: customDom,
+        projectName,
       });
     }
 
@@ -804,12 +1001,9 @@ export class DashboardStore {
       targetPost = getSamplePostForTheme(themeKey);
     }
 
-    const activeProj = this.projects[this.activeProjectId];
-    const customDom = activeProj?.cf_custom_domain || this.config.cloudflare.custom_domain || '';
     const sourceDomain = customDom
       ? stripProtocol(customDom)
       : this.config.ingestion.wp_api_url || 'stylesdays.com';
-    const baseUrl = customDom ? `https://${stripProtocol(customDom)}` : '';
 
     return renderPostHtml({
       post: targetPost,
@@ -820,46 +1014,105 @@ export class DashboardStore {
       routingMode,
       baseUrl,
       sourceDomain,
+      customDomain: customDom,
+      projectName,
     });
   }
 
-  async scanSitemap(urlOrList?: string): Promise<{ success: boolean; discovered_count: number; urls: string[] }> {
+  async scanSitemap(
+    urlOrList?: string,
+    sourceType = 'sitemap',
+    maxPostsOverride?: number
+  ): Promise<{
+    success: boolean;
+    discovered_count: number;
+    will_ingest_count: number;
+    max_posts: number;
+    urls: string[];
+    error?: string;
+  }> {
     const src = (urlOrList || this.config.ingestion.sitemap_url || '').trim();
-    this.log(`Scanning sitemap source: ${src || '(default catalog)'}`);
-    const discovered = await this.fetchUrlsFromSource('sitemap', src);
-    const urls =
-      discovered.length > 0
-        ? discovered
-        : Object.keys(this.manifest.posts).length > 0
-          ? Object.values(this.manifest.posts).map((p) => `https://stylesdays.com/${p.slug}/`)
-          : getSeedPosts().map((p) => `https://stylesdays.com/${p.slug}/`);
-    return { success: true, discovered_count: urls.length, urls };
+    const effectiveMax =
+      maxPostsOverride !== undefined && Number.isFinite(maxPostsOverride) && maxPostsOverride >= 0
+        ? Math.floor(maxPostsOverride)
+        : Number(this.config.ingestion.max_posts ?? 100);
+    this.log(`Scanning ${sourceType} source: ${src || '(empty)'}`);
+    if (!src) {
+      return {
+        success: false,
+        discovered_count: 0,
+        will_ingest_count: 0,
+        max_posts: effectiveMax,
+        urls: [],
+        error: 'Please enter a Sitemap XML URL or paste a list of URLs first.',
+      };
+    }
+    try {
+      if (sourceType === 'wp_api') {
+        const posts = await fetchWpApiPosts(src, effectiveMax > 0 ? effectiveMax : 1000);
+        const urls = posts.map((p) => String(p.raw_meta?.source_url || `/${p.slug}/`));
+        this.log(`Scanned WordPress API: found ${urls.length} post URLs.`);
+        return {
+          success: true,
+          discovered_count: urls.length,
+          will_ingest_count: urls.length,
+          max_posts: effectiveMax,
+          urls,
+        };
+      }
+      // Pass 0 to discover the EXACT total URL count in the sitemap without artificial truncation
+      const entries = await discoverUrlsFromSource(sourceType, src, 0);
+      const urls = entries.map((e) => e.url);
+      const willIngest = effectiveMax > 0 ? Math.min(urls.length, effectiveMax) : urls.length;
+      this.log(
+        `Scanned ${sourceType}: discovered exact ${urls.length} URL(s) (will ingest ${willIngest} with max_posts=${effectiveMax || 'All'}).`
+      );
+      return {
+        success: true,
+        discovered_count: urls.length,
+        will_ingest_count: willIngest,
+        max_posts: effectiveMax,
+        urls,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.log(`[ERROR] Scan failed: ${msg}`);
+      return {
+        success: false,
+        discovered_count: 0,
+        will_ingest_count: 0,
+        max_posts: effectiveMax,
+        urls: [],
+        error: msg,
+      };
+    }
   }
 
-  private async fetchUrlsFromSource(sourceType: string, urlOrList: string): Promise<string[]> {
-    if (sourceType === 'url_list') {
-      return urlOrList
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter((line) => line && !line.startsWith('#') && /^https?:\/\//i.test(line));
+  stopIngestJob(): Record<string, unknown> {
+    if (this.ingestJob.status !== 'running') {
+      return {
+        success: true,
+        status: this.ingestJob.status,
+        message: 'No active ingestion job is currently running.',
+      };
     }
-    if (!urlOrList || !/^https?:\/\//i.test(urlOrList)) return [];
-
+    this.ingestStopRequested = true;
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 8000);
-      const res = await fetch(urlOrList, {
-        signal: controller.signal,
-        headers: { 'User-Agent': 'stylesdays-pSEO-Hub/2.0' },
-      });
-      clearTimeout(timeout);
-      if (!res.ok) return [];
-      const xml = await res.text();
-      const matches = [...xml.matchAll(/<loc>\s*([^<\s]+)\s*<\/loc>/gi)].map((m) => m[1].trim());
-      return Array.from(new Set(matches.filter((u) => !u.endsWith('.xml'))));
+      this.ingestAbortController?.abort();
     } catch {
-      return [];
+      // Ignore abort error
     }
+    this.ingestAbortController = null;
+    this.ingestJob.status = 'stopped';
+    this.ingestJob.completed_at = new Date().toISOString();
+    this.ingestJob.message = `Ingestion stopped by user (${this.ingestJob.processed_count}/${this.ingestJob.total_count} processed).`;
+    this.log(`[INGEST] ${this.ingestJob.message}`);
+    return {
+      success: true,
+      status: 'stopped',
+      message: this.ingestJob.message,
+      job: this.ingestJob,
+    };
   }
 
   async executeIngestion(params: {
@@ -868,83 +1121,153 @@ export class DashboardStore {
     maxPosts?: number;
     downloadImages?: boolean;
     forceFullResync?: boolean;
-  }): Promise<DiffSummary> {
+    signal?: AbortSignal;
+  }): Promise<DiffSummary & { stopped?: boolean }> {
     const sourceType = params.sourceType || 'sitemap';
     const urlOrList = (params.urlOrList || '').trim();
-    const maxPosts = Number(params.maxPosts ?? this.config.ingestion.max_posts ?? 100) || 100;
+    const rawMax = params.maxPosts !== undefined ? Number(params.maxPosts) : Number(this.config.ingestion.max_posts ?? 100);
+    const maxPosts = Number.isFinite(rawMax) && rawMax >= 0 ? Math.floor(rawMax) : 100;
+    const downloadImages = params.downloadImages ?? this.config.ingestion.download_images ?? true;
     const force = Boolean(params.forceFullResync);
+    const signal = params.signal;
+    const assetsDir = path.join(this.workspaceDir, 'assets', 'images');
+
+    if (!signal) {
+      this.ingestStopRequested = false;
+    }
+    const isCancelled = () => Boolean(this.ingestStopRequested || signal?.aborted);
 
     let discoveredPosts: PostItem[] = [];
+    let totalDownloadedImages = 0;
+    let totalOriginalImgBytes = 0;
+    let totalWebpImgBytes = 0;
 
     if (sourceType === 'wp_api') {
       const base = (urlOrList || this.config.ingestion.wp_api_url || '').replace(/\/+$/, '');
-      if (base && /^https?:\/\//i.test(base)) {
-        try {
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 8000);
-          const apiUrl = `${base}/wp-json/wp/v2/posts?per_page=${Math.min(maxPosts, 50)}`;
-          const res = await fetch(apiUrl, { signal: controller.signal });
-          clearTimeout(timeout);
-          if (res.ok) {
-            const items = (await res.json()) as Array<Record<string, unknown>>;
-            discoveredPosts = items.map((wp) => {
-              const titleObj = wp.title as Record<string, string> | undefined;
-              const excerptObj = wp.excerpt as Record<string, string> | undefined;
-              const contentObj = wp.content as Record<string, string> | undefined;
-              const cleanExcerpt = String(excerptObj?.rendered || '').replace(/<[^>]+>/g, '').trim();
-              return normalizePost({
-                slug: String(wp.slug || ''),
-                title: String(titleObj?.rendered || wp.slug || '').replace(/<[^>]+>/g, ''),
-                excerpt: cleanExcerpt,
-                content_html: String(contentObj?.rendered || ''),
-                date: String(wp.date || '').slice(0, 10),
-                modified: String(wp.modified || wp.date || '').slice(0, 10),
-                category: 'WordPress Editorial',
-                category_slug: 'wordpress-editorial',
-              });
-            });
-          }
-        } catch (err) {
-          this.log(`[WARN] WordPress REST API fallback (${String(err)}).`);
+      if (!base) {
+        throw new Error('Please provide a WordPress site URL for WordPress REST API ingestion.');
+      }
+      this.ingestJob.message = `Fetching posts from WordPress REST API (${base})...`;
+      discoveredPosts = await fetchWpApiPosts(base, maxPosts > 0 ? maxPosts : 1000, signal);
+      if (isCancelled()) {
+        return {
+          stopped: true,
+          new_posts: [],
+          updated_posts: [],
+          synced_posts: [],
+          unchanged_posts: [],
+          counts: { new: 0, updated: 0, synced: 0, unchanged: 0, total: 0 },
+        };
+      }
+      this.ingestJob.total_count = discoveredPosts.length;
+      if (downloadImages && discoveredPosts.length > 0) {
+        for (let i = 0; i < discoveredPosts.length; i++) {
+          if (isCancelled()) break;
+          const post = discoveredPosts[i];
+          this.ingestJob.current_post = post.slug;
+          this.ingestJob.processed_count = i + 1;
+          this.ingestJob.message = `Optimizing images to WebP (${i + 1}/${discoveredPosts.length}): ${post.title}`;
+          const imgRes = await localizeAndConvertPostImages({ post, assetsDir, signal });
+          totalDownloadedImages += imgRes.downloaded;
+          totalOriginalImgBytes += imgRes.originalBytes;
+          totalWebpImgBytes += imgRes.webpBytes;
         }
       }
-    } else if (sourceType === 'url_list' || (sourceType === 'sitemap' && urlOrList)) {
-      const urls = (await this.fetchUrlsFromSource(sourceType, urlOrList)).slice(0, maxPosts);
-      if (urls.length > 0) {
-        const today = new Date().toISOString().slice(0, 10);
-        discoveredPosts = urls.map((rawUrl) => {
-          let pathname = '';
-          let hostname = 'stylesdays.com';
-          try {
-            const parsed = new URL(rawUrl);
-            pathname = parsed.pathname;
-            hostname = parsed.hostname;
-          } catch {
-            pathname = rawUrl;
-          }
-          const parts = pathname.split('/').filter(Boolean);
-          const slug = slugify(parts[parts.length - 1] || 'guide');
-          const catSlug = parts.length > 1 ? slugify(parts[0]) : 'home-organization';
-          const category = catSlug.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-          const title = slug.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-          return normalizePost({
-            slug,
-            title,
-            excerpt: `Curated editorial styling and spatial layout guide for ${title.toLowerCase()}.`,
-            category,
-            category_slug: catSlug,
-            parent_slug: catSlug,
-            date: today,
-            modified: today,
-            domain: hostname,
-            local_image_path: `/assets/images/${slug}.svg`,
-          });
-        });
+    } else if (urlOrList) {
+      this.ingestJob.message = `Discovering URLs from ${sourceType}...`;
+      const allDiscovered = await discoverUrlsFromSource(sourceType, urlOrList, 0, signal);
+      if (isCancelled()) {
+        return {
+          stopped: true,
+          new_posts: [],
+          updated_posts: [],
+          synced_posts: [],
+          unchanged_posts: [],
+          counts: { new: 0, updated: 0, synced: 0, unchanged: 0, total: 0 },
+        };
       }
+      const entries = maxPosts > 0 ? allDiscovered.slice(0, maxPosts) : allDiscovered;
+      if (entries.length === 0) {
+        throw new Error(`No URLs were found in the provided ${sourceType} source.`);
+      }
+
+      this.ingestJob.total_count = entries.length;
+      this.log(
+        `Discovered exact ${allDiscovered.length} URL(s) in source` +
+          (entries.length < allDiscovered.length ? ` (capped to max_posts=${maxPosts})` : '') +
+          `. Scraping ${entries.length} post(s) & converting images to WebP...`
+      );
+
+      const results: Array<PostItem | null> = new Array(entries.length).fill(null);
+      let cursor = 0;
+      let completed = 0;
+      let failedCount = 0;
+      const concurrency = Math.min(4, entries.length);
+
+      const worker = async () => {
+        while (!isCancelled()) {
+          const idx = cursor;
+          cursor += 1;
+          if (idx >= entries.length) break;
+          const entry = entries[idx];
+          try {
+            this.ingestJob.current_post = entry.url;
+            const post = await scrapeArticleFromUrl(entry, signal);
+            if (isCancelled()) break;
+            if (downloadImages) {
+              const imgRes = await localizeAndConvertPostImages({ post, assetsDir, signal });
+              totalDownloadedImages += imgRes.downloaded;
+              totalOriginalImgBytes += imgRes.originalBytes;
+              totalWebpImgBytes += imgRes.webpBytes;
+            }
+            if (isCancelled()) break;
+            results[idx] = post;
+          } catch (err) {
+            if (isCancelled()) break;
+            failedCount += 1;
+            this.log(`[WARN] Skipped ${entry.url}: ${err instanceof Error ? err.message : String(err)}`);
+          } finally {
+            if (!isCancelled()) {
+              completed += 1;
+              this.ingestJob.processed_count = completed;
+              this.ingestJob.message = `Scraped ${completed}/${entries.length} source URLs (${totalDownloadedImages} WebP images optimized)...`;
+            }
+          }
+        }
+      };
+
+      await Promise.all(Array.from({ length: concurrency }, () => worker()));
+      if (isCancelled()) {
+        return {
+          stopped: true,
+          new_posts: [],
+          updated_posts: [],
+          synced_posts: [],
+          unchanged_posts: [],
+          counts: { new: 0, updated: 0, synced: 0, unchanged: 0, total: 0 },
+        };
+      }
+      discoveredPosts = results.filter((p): p is PostItem => p !== null);
+
+      if (discoveredPosts.length === 0) {
+        throw new Error(
+          `Failed to scrape content from all ${entries.length} discovered URL(s) (${failedCount} failed). Check if the source site is reachable.`
+        );
+      }
+    } else {
+      // Blank source input (local/demo test mode only)
+      discoveredPosts = getSeedPosts().slice(0, maxPosts > 0 ? maxPosts : 100);
     }
 
-    if (discoveredPosts.length === 0) {
-      discoveredPosts = getSeedPosts().slice(0, maxPosts);
+    if (isCancelled()) {
+      return {
+        stopped: true,
+        new_posts: [],
+        updated_posts: [],
+        synced_posts: [],
+        unchanged_posts: [],
+        counts: { new: 0, updated: 0, synced: 0, unchanged: 0, total: 0 },
+      };
     }
 
     const diff: DiffSummary = {
@@ -966,9 +1289,13 @@ export class DashboardStore {
         if (incoming.local_image_path) existing.local_image_path = incoming.local_image_path;
         diff.synced_posts.push(existing);
         nextPosts[incoming.slug] = existing;
-      } else if (existing.modified !== incoming.modified || existing.title !== incoming.title) {
-        incoming.checklist = existing.checklist.length ? existing.checklist : incoming.checklist;
-        incoming.takeaways = existing.takeaways.length ? existing.takeaways : incoming.takeaways;
+      } else if (
+        force ||
+        existing.modified !== incoming.modified ||
+        existing.title !== incoming.title ||
+        existing.content_html !== incoming.content_html ||
+        existing.local_image_path !== incoming.local_image_path
+      ) {
         diff.updated_posts.push(incoming);
         nextPosts[incoming.slug] = incoming;
       } else {
@@ -979,7 +1306,9 @@ export class DashboardStore {
 
     this.manifest.posts = nextPosts;
     this.manifest.categories = deriveCategories(nextPosts);
-    this.ensureSvgAssetsForPosts();
+    if (!urlOrList) {
+      this.ensureSvgAssetsForPosts();
+    }
     this.saveManifest();
 
     diff.counts = {
@@ -990,8 +1319,15 @@ export class DashboardStore {
       total: discoveredPosts.length,
     };
 
+    const savedPct =
+      totalOriginalImgBytes > 0
+        ? Math.max(0, Math.round(((totalOriginalImgBytes - totalWebpImgBytes) / totalOriginalImgBytes) * 100))
+        : 0;
     this.log(
-      `Ingestion complete: ${diff.counts.new} new, ${diff.counts.updated} updated, ${diff.counts.synced} synced.`
+      `Ingestion complete: ${diff.counts.new} new, ${diff.counts.updated} updated, ${diff.counts.synced} synced` +
+        (totalDownloadedImages > 0
+          ? ` · ${totalDownloadedImages} image(s) optimized to WebP (${savedPct}% size reduction).`
+          : '.')
     );
     return diff;
   }
@@ -1000,14 +1336,15 @@ export class DashboardStore {
     if (this.ingestJob.status === 'running') {
       return {
         success: false,
-        error: 'An ingestion job is already running.',
+        error: 'An ingestion job is already running. Click Stop first to cancel it.',
         job: this.ingestJob,
       };
     }
 
     const sourceType = String(body.source_type || 'sitemap');
     const urlOrList = String(body.url_or_list || '').trim();
-    const maxPosts = body.max_posts !== undefined ? Number(body.max_posts) : undefined;
+    const parsedMax = body.max_posts !== undefined && body.max_posts !== '' ? Number(body.max_posts) : undefined;
+    const maxPosts = parsedMax !== undefined && Number.isFinite(parsedMax) && parsedMax >= 0 ? Math.floor(parsedMax) : undefined;
     const downloadImages = body.download_images !== undefined ? Boolean(body.download_images) : undefined;
     const forceFullResync = Boolean(body.force_full_resync);
 
@@ -1015,7 +1352,7 @@ export class DashboardStore {
       this.config.ingestion.sitemap_url = urlOrList;
       if (this.projects[this.activeProjectId]) this.projects[this.activeProjectId].sitemap_url = urlOrList;
     }
-    if (maxPosts !== undefined && !Number.isNaN(maxPosts)) {
+    if (maxPosts !== undefined) {
       this.config.ingestion.max_posts = maxPosts;
       if (this.projects[this.activeProjectId]) this.projects[this.activeProjectId].max_posts = maxPosts;
     }
@@ -1039,6 +1376,9 @@ export class DashboardStore {
     }
     this.saveConfig();
 
+    this.ingestStopRequested = false;
+    this.ingestAbortController = new AbortController();
+
     this.ingestJob = {
       status: 'running',
       started_at: new Date().toISOString(),
@@ -1054,14 +1394,21 @@ export class DashboardStore {
       synced_posts: [],
     };
 
+    const controller = this.ingestAbortController;
     void this.executeIngestion({
       sourceType,
       urlOrList,
       maxPosts,
       downloadImages,
       forceFullResync,
+      signal: controller.signal,
     })
       .then((diff) => {
+        if (this.ingestStopRequested || diff.stopped) {
+          this.ingestJob.status = 'stopped';
+          if (!this.ingestJob.completed_at) this.ingestJob.completed_at = new Date().toISOString();
+          return;
+        }
         this.ingestJob.status = 'success';
         this.ingestJob.completed_at = new Date().toISOString();
         this.ingestJob.processed_count = diff.counts.total;
@@ -1073,11 +1420,21 @@ export class DashboardStore {
         this.ingestJob.message = `Ingestion complete: ${diff.counts.new} new, ${diff.counts.updated} updated, ${diff.counts.synced} synced.`;
       })
       .catch((err) => {
+        if (this.ingestStopRequested || controller.signal.aborted) {
+          this.ingestJob.status = 'stopped';
+          if (!this.ingestJob.completed_at) this.ingestJob.completed_at = new Date().toISOString();
+          return;
+        }
         this.ingestJob.status = 'error';
         this.ingestJob.completed_at = new Date().toISOString();
         this.ingestJob.error = String(err);
         this.ingestJob.message = `Ingestion failed: ${String(err)}`;
         this.log(`[ERROR] ${this.ingestJob.message}`);
+      })
+      .finally(() => {
+        if (this.ingestAbortController === controller) {
+          this.ingestAbortController = null;
+        }
       });
 
     return {
@@ -1119,42 +1476,72 @@ export class DashboardStore {
     return { total, generatedSvg };
   }
 
-  syncAllPostImages(): Record<string, unknown> {
-    this.log('Syncing post artwork assets into assets/images/...');
-    const { total, generatedSvg } = this.ensureSvgAssetsForPosts();
+  async syncAllPostImages(): Promise<Record<string, unknown>> {
+    this.log('Downloading & converting post images to optimized WebP...');
+    const assetsDir = path.join(this.workspaceDir, 'assets', 'images');
+    const posts = Object.values(this.manifest.posts);
+    let downloaded = 0;
+    let originalBytes = 0;
+    let webpBytes = 0;
+
+    for (const post of posts) {
+      const res = await localizeAndConvertPostImages({ post, assetsDir });
+      downloaded += res.downloaded;
+      originalBytes += res.originalBytes;
+      webpBytes += res.webpBytes;
+    }
+
     this.saveManifest();
-    this.log(`Image asset sync complete: ${total} total (${generatedSvg} generated SVGs).`);
+    const percentReduction =
+      originalBytes > 0 ? Math.max(0, Math.round(((originalBytes - webpBytes) / originalBytes) * 100)) : 0;
+    this.log(
+      `Image asset sync complete: ${posts.length} posts scanned, ${downloaded} image(s) converted to WebP (${percentReduction}% smaller).`
+    );
     return {
       success: true,
-      total,
-      downloaded: 0,
-      generated_svg: generatedSvg,
+      total: posts.length,
+      downloaded,
+      original_bytes: originalBytes,
+      webp_bytes: webpBytes,
+      percent_reduction: percentReduction,
     };
   }
 
-  optimizeAllImages(quality = 82): Record<string, unknown> {
-    this.log(`Running image asset audit & optimization (quality=${quality})...`);
+  async optimizeAllImages(quality = 82): Promise<Record<string, unknown>> {
+    this.log(`Running automatic WebP image optimization (quality=${quality})...`);
     const assetsDir = path.join(this.workspaceDir, 'assets', 'images');
-    let converted = 0;
-    let originalBytes = 0;
-    if (fs.existsSync(assetsDir)) {
-      for (const file of fs.readdirSync(assetsDir)) {
-        const full = path.join(assetsDir, file);
-        if (fs.statSync(full).isFile()) {
-          converted += 1;
-          originalBytes += fs.statSync(full).size;
+    const result = await optimizeDirectoryToWebp({ assetsDir, quality });
+
+    if (result.renamedMap.size > 0) {
+      for (const post of Object.values(this.manifest.posts)) {
+        if (post.local_image_path && result.renamedMap.has(post.local_image_path)) {
+          post.local_image_path = result.renamedMap.get(post.local_image_path)!;
+        }
+        if (post.content_html) {
+          for (const [oldPath, newPath] of result.renamedMap.entries()) {
+            if (post.content_html.includes(oldPath)) {
+              post.content_html = post.content_html.split(oldPath).join(newPath);
+            }
+          }
         }
       }
+      this.saveManifest();
     }
-    const optimizedBytes = Math.round(originalBytes * 0.72);
-    const percentReduction = originalBytes > 0 ? 28 : 0;
-    this.log(`Optimization complete: ${converted} assets verified (${percentReduction}% projected reduction).`);
+
+    const savedBytes = Math.max(0, result.originalBytes - result.optimizedBytes);
+    const percentReduction =
+      result.originalBytes > 0 ? Math.round((savedBytes / result.originalBytes) * 100) : 0;
+    this.log(
+      `WebP optimization complete: ${result.converted} converted to WebP, ${result.reoptimized} WebP re-optimized (${percentReduction}% saved).`
+    );
     return {
       success: true,
       stats: {
-        converted,
-        original_bytes: originalBytes,
-        optimized_bytes: optimizedBytes,
+        converted: result.converted,
+        reoptimized: result.reoptimized,
+        original_bytes: result.originalBytes,
+        optimized_bytes: result.optimizedBytes,
+        saved_bytes: savedBytes,
         percent_reduction: percentReduction,
       },
     };
@@ -1169,10 +1556,19 @@ export class DashboardStore {
     routingMode?: string;
   } = {}): Record<string, unknown> {
     const startMs = Date.now();
-    const effectiveSub = (opts.subdomain || opts.projectName || this.activeProjectId || 'stylesdays').trim();
+    const activeProjById = this.projects[this.activeProjectId];
+    const isCloudflare =
+      (opts.targetCloud || activeProjById?.platform || 'cloudflare').toLowerCase() === 'cloudflare';
+    const effectiveSub = (
+      opts.subdomain ||
+      opts.projectName ||
+      (isCloudflare ? this.config.cloudflare.project_name : '') ||
+      this.activeProjectId ||
+      'stylesdays'
+    ).trim();
     const { token, outputDir } = this.resolveOutputDir(opts.targetCloud, effectiveSub, effectiveSub);
 
-    const activeProj = this.projects[effectiveSub];
+    const activeProj = activeProjById || this.projects[effectiveSub];
     const effectiveTheme = opts.theme || activeProj?.theme || this.config.build.theme || 'nordic-studio';
     const effectiveRouting = normalizeRoutingMode(
       opts.routingMode || activeProj?.routing_mode || this.config.build.routing_mode || 'single'
@@ -1193,9 +1589,16 @@ export class DashboardStore {
     this.ensureSvgAssetsForPosts();
     const posts = Object.values(this.manifest.posts);
     const categories = deriveCategories(this.manifest.posts);
-    const baseUrl = this.config.cloudflare.custom_domain
-      ? `https://${stripProtocol(this.config.cloudflare.custom_domain)}`
+    const customDomain = activeProj?.cf_custom_domain || this.config.cloudflare.custom_domain || '';
+    const baseUrl = customDomain
+      ? `https://${stripProtocol(customDomain)}`
       : getCloudflareLiveUrl(this.config.cloudflare);
+    const identity = resolveSiteIdentity({
+      customDomain,
+      baseUrl,
+      branding: this.config.branding,
+      projectName: token,
+    });
 
     const filesCreated: string[] = [];
     const sitemapUrls: string[] = [`${baseUrl}/`];
@@ -1208,6 +1611,8 @@ export class DashboardStore {
       branding: this.config.branding,
       routingMode: effectiveRouting,
       baseUrl,
+      customDomain,
+      projectName: token,
     });
     fs.writeFileSync(path.join(outputDir, 'index.html'), hubHtml, 'utf-8');
     filesCreated.push('index.html');
@@ -1225,40 +1630,85 @@ export class DashboardStore {
         categories,
         routingMode: effectiveRouting,
         baseUrl,
+        customDomain,
+        projectName: token,
       });
       fs.writeFileSync(targetFile, html, 'utf-8');
       filesCreated.push(route.file_path);
       sitemapUrls.push(`${baseUrl}${route.web_path}`);
     }
 
-    // 3. Category index pages
+    // 3. Category index pages (both /{slug}/ and /category/{slug}/ aliases)
     for (const cat of categories) {
       const catPosts = posts.filter((p) => p.category_slug === cat.slug);
+      const catHtml = renderCategoryIndexHtml({
+        category: cat,
+        posts: catPosts,
+        categories,
+        themeKey: effectiveTheme,
+        branding: this.config.branding,
+        routingMode: effectiveRouting,
+        baseUrl,
+        customDomain,
+        projectName: token,
+      });
       const catDir = path.join(outputDir, cat.slug);
       fs.mkdirSync(catDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(catDir, 'index.html'),
-        renderCategoryIndexHtml({
-          category: cat,
-          posts: catPosts,
-          categories,
-          themeKey: effectiveTheme,
-          branding: this.config.branding,
-          routingMode: effectiveRouting,
-        }),
-        'utf-8'
-      );
+      fs.writeFileSync(path.join(catDir, 'index.html'), catHtml, 'utf-8');
       filesCreated.push(`${cat.slug}/index.html`);
       sitemapUrls.push(`${baseUrl}/${cat.slug}/`);
+
+      const catAliasDir = path.join(outputDir, 'category', cat.slug);
+      fs.mkdirSync(catAliasDir, { recursive: true });
+      fs.writeFileSync(path.join(catAliasDir, 'index.html'), catHtml, 'utf-8');
+      filesCreated.push(`category/${cat.slug}/index.html`);
     }
 
-    // 4. Copy assets
+    // 3b. Static Company, Trust, Policy & Sitemap pages (10 pages matching decohome.homeandrecipe.com)
+    const trustPages = buildTrustPages({
+      identity,
+      posts,
+      categories,
+      routingMode: effectiveRouting,
+    });
+    for (const page of trustPages) {
+      const pageDir = path.join(outputDir, page.slug);
+      fs.mkdirSync(pageDir, { recursive: true });
+      const pageHtml = renderStaticPageHtml({
+        page,
+        categories,
+        themeKey: effectiveTheme,
+        branding: this.config.branding,
+        identity,
+      });
+      fs.writeFileSync(path.join(pageDir, 'index.html'), pageHtml, 'utf-8');
+      filesCreated.push(`${page.slug}/index.html`);
+      sitemapUrls.push(`${baseUrl}/${page.slug}/`);
+    }
+
+    // 4. Copy referenced assets (and custom logo) into build output
     let imagesCopied = 0;
     const srcAssets = path.join(this.workspaceDir, 'assets', 'images');
     const dstAssets = path.join(outputDir, 'assets', 'images');
     if (fs.existsSync(srcAssets)) {
+      const referenced = new Set<string>();
+      if (this.config.branding.logo_path && this.config.branding.logo_path.startsWith('/assets/images/')) {
+        referenced.add(path.basename(this.config.branding.logo_path));
+      }
+      for (const post of posts) {
+        if (post.local_image_path && post.local_image_path.startsWith('/assets/images/')) {
+          referenced.add(path.basename(post.local_image_path));
+        }
+        if (post.content_html) {
+          for (const m of post.content_html.matchAll(/\/assets\/images\/([a-zA-Z0-9._-]+)/g)) {
+            referenced.add(m[1]);
+          }
+        }
+      }
+
       fs.mkdirSync(dstAssets, { recursive: true });
       for (const f of fs.readdirSync(srcAssets)) {
+        if (referenced.size > 0 && !referenced.has(f)) continue;
         const s = path.join(srcAssets, f);
         if (fs.statSync(s).isFile()) {
           fs.copyFileSync(s, path.join(dstAssets, f));
@@ -1297,7 +1747,8 @@ export class DashboardStore {
       total_posts: posts.length,
       post_pages_generated: posts.length,
       intermediate_pages_generated: categories.length,
-      total_pages_generated: posts.length + categories.length + 1,
+      static_pages_generated: trustPages.length,
+      total_pages_generated: posts.length + categories.length + trustPages.length + 1,
       duration_seconds: durationSeconds,
       theme: effectiveTheme,
       routing_mode: effectiveRouting,
@@ -1367,35 +1818,103 @@ export class DashboardStore {
   }
 
   async verifyCloudflareCredentials(tokenInput?: string, accountIdInput?: string): Promise<Record<string, unknown>> {
-    let token = (tokenInput || '').trim();
-    if (!token || token.includes('****')) token = this.config.cloudflare.api_token;
-    const accountId = (accountIdInput || this.config.cloudflare.account_id || '').trim();
+    let token = (tokenInput || '').trim().replace(/^Bearer\s+/i, '').replace(/^['"]|['"]$/g, '').trim();
+    if (!token || token.includes('****')) token = this.getEffectiveCloudflareToken();
+    let accountId = (accountIdInput || '').trim().replace(/^['"]|['"]$/g, '').trim() || this.getEffectiveCloudflareAccountId();
 
     if (!token) {
+      const msg =
+        'No Cloudflare API Token found. Set CLOUDFLARE_API_TOKEN in environment variables or enter your token in Settings.';
       return {
         success: false,
         valid: false,
         verified: false,
-        message: 'No Cloudflare API Token provided.',
+        error: msg,
+        message: msg,
       };
     }
 
+    const headers = { Authorization: `Bearer ${token}` };
+    type CfApiResp = {
+      success?: boolean;
+      result?: { id?: string; status?: string; subdomain?: string } | Array<{ id?: string; name?: string }>;
+      errors?: Array<{ code?: number; message?: string }>;
+    };
+
     try {
-      const res = await fetch('https://api.cloudflare.com/client/v4/user/tokens/verify', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = (await res.json()) as { success?: boolean; result?: { status?: string }; errors?: Array<{ message?: string }> };
-      const valid = Boolean(res.ok && data.success);
+      let valid = false;
+      let tokenStatus = 'active';
+      let lastErr = '';
+
+      // 1. Try standard User API Token verification
+      const userRes = await fetch('https://api.cloudflare.com/client/v4/user/tokens/verify', { headers });
+      const userData = (await userRes.json().catch(() => ({}))) as CfApiResp;
+      if (userRes.ok && userData.success) {
+        valid = true;
+        if (userData.result && !Array.isArray(userData.result) && userData.result.status) {
+          tokenStatus = userData.result.status;
+        }
+      } else {
+        lastErr = userData.errors?.[0]?.message || `HTTP ${userRes.status}`;
+      }
+
+      // 2. Fallback for Cloudflare Account API Tokens (requires accountId)
+      if (!valid && accountId) {
+        const acctVerifyRes = await fetch(
+          `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/tokens/verify`,
+          { headers }
+        );
+        const acctVerifyData = (await acctVerifyRes.json().catch(() => ({}))) as CfApiResp;
+        if (acctVerifyRes.ok && acctVerifyData.success) {
+          valid = true;
+          if (acctVerifyData.result && !Array.isArray(acctVerifyData.result) && acctVerifyData.result.status) {
+            tokenStatus = acctVerifyData.result.status;
+          }
+        } else {
+          const acctErr = acctVerifyData.errors?.[0]?.message || `HTTP ${acctVerifyRes.status}`;
+          if (acctErr) lastErr = acctErr;
+        }
+      }
+
+      // 3. Fallback for narrowly scoped Account tokens without token-verify permission
+      if (!valid && accountId) {
+        const acctRes = await fetch(
+          `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}`,
+          { headers }
+        );
+        const acctData = (await acctRes.json().catch(() => ({}))) as CfApiResp;
+        if (acctRes.ok && acctData.success) {
+          valid = true;
+          tokenStatus = 'active (account-scoped)';
+        }
+      }
+
+      // 4. Auto-discover account ID if missing on a valid User token
+      if (valid && !accountId) {
+        try {
+          const listRes = await fetch('https://api.cloudflare.com/client/v4/accounts?per_page=1', { headers });
+          if (listRes.ok) {
+            const listData = (await listRes.json().catch(() => ({}))) as CfApiResp;
+            if (Array.isArray(listData.result) && listData.result[0]?.id) {
+              accountId = listData.result[0].id;
+            }
+          }
+        } catch {
+          // Optional account auto-discovery
+        }
+      }
+
+      // 5. Probe workers.dev subdomain when accountId is available
       let subdomain = this.config.cloudflare.account_subdomain;
       if (valid && accountId) {
         try {
           const subRes = await fetch(
-            `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/subdomain`,
-            { headers: { Authorization: `Bearer ${token}` } }
+            `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/workers/subdomain`,
+            { headers }
           );
           if (subRes.ok) {
-            const subData = (await subRes.json()) as { result?: { subdomain?: string } };
-            if (subData.result?.subdomain) {
+            const subData = (await subRes.json().catch(() => ({}))) as CfApiResp;
+            if (subData.result && !Array.isArray(subData.result) && subData.result.subdomain) {
               subdomain = subData.result.subdomain;
               this.config.cloudflare.account_subdomain = subdomain;
               this.saveConfig();
@@ -1405,17 +1924,28 @@ export class DashboardStore {
           // Optional subdomain probe
         }
       }
+
       const message = valid
-        ? `Cloudflare API token is active (${data.result?.status || 'active'}).`
-        : data.errors?.[0]?.message || `Cloudflare verification failed (HTTP ${res.status}).`;
+        ? `Cloudflare API token is active (${tokenStatus}).`
+        : `Cloudflare rejected credentials (${lastErr || 'Invalid API token or Account ID'}). Check CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID.`;
       this.log(`[CLOUDFLARE] ${message}`);
-      return { success: valid, valid, verified: valid, subdomain, message };
+      return {
+        success: valid,
+        valid,
+        verified: valid,
+        account_id: accountId,
+        subdomain,
+        message,
+        ...(valid ? {} : { error: message }),
+      };
     } catch (err) {
+      const msg = `Network error verifying Cloudflare token: ${String(err)}`;
       return {
         success: false,
         valid: false,
         verified: false,
-        message: `Network error verifying Cloudflare token: ${String(err)}`,
+        error: msg,
+        message: msg,
       };
     }
   }
@@ -1449,40 +1979,91 @@ export class DashboardStore {
       theme: opts.theme,
     });
 
-    const liveUrl = getCloudflareLiveUrl({
+    const outputDir = String(buildRes.output_dir || this.resolveOutputDir('cloudflare', effectiveSub, effectiveSub).outputDir);
+    const filesCount = Number(buildRes.files_count || 0);
+    this.deployJob.files_count = filesCount;
+    this.deployJob.total_files = filesCount;
+
+    const fallbackLiveUrl = getCloudflareLiveUrl({
       ...this.config.cloudflare,
       project_name: effectiveSub,
     });
 
-    setTimeout(() => {
-      if (!dryRun && !this.config.cloudflare.api_token) {
-        this.deployJob.status = 'error';
+    if (dryRun) {
+      setTimeout(() => {
+        const duration = Number(((Date.now() - startMs) / 1000).toFixed(2));
+        this.deployJob.status = 'success';
+        this.deployJob.stage = 'done';
         this.deployJob.percent = 100;
         this.deployJob.completed_at = new Date().toISOString();
-        this.deployJob.error =
-          'Cloudflare API Token is not configured. Enable Dry Run Simulation or configure your token in Settings.';
-        this.deployJob.errors = [this.deployJob.error];
-        this.deployJob.message = this.deployJob.error;
-        this.log(`[CLOUDFLARE ERROR] ${this.deployJob.error}`);
-        return;
-      }
+        this.deployJob.live_url = fallbackLiveUrl;
+        this.deployJob.duration = duration;
+        this.deployJob.deployed_files = filesCount;
+        this.deployJob.message = `[DRY-RUN] Verified ${filesCount} static assets for ${fallbackLiveUrl}.`;
+        this.log(`[CLOUDFLARE] ${this.deployJob.message}`);
+      }, 250);
+    } else {
+      void (async () => {
+        try {
+          const token = this.getEffectiveCloudflareToken();
+          if (!token) {
+            throw new Error(
+              'Cloudflare API Token is not configured. Enable Dry Run Simulation or configure CLOUDFLARE_API_TOKEN.'
+            );
+          }
 
-      const filesCount = Number(buildRes.files_count || 0);
-      const duration = Number(((Date.now() - startMs) / 1000).toFixed(2));
-      this.deployJob.status = 'success';
-      this.deployJob.stage = 'done';
-      this.deployJob.percent = 100;
-      this.deployJob.completed_at = new Date().toISOString();
-      this.deployJob.live_url = liveUrl;
-      this.deployJob.duration = duration;
-      this.deployJob.files_count = filesCount;
-      this.deployJob.total_files = filesCount;
-      this.deployJob.deployed_files = filesCount;
-      this.deployJob.message = dryRun
-        ? `[DRY-RUN] Verified ${filesCount} static assets for ${liveUrl}.`
-        : `Deployed ${filesCount} assets to ${liveUrl}.`;
-      this.log(`[CLOUDFLARE] ${this.deployJob.message}`);
-    }, 350);
+          const result = await deployCloudflareWorkersAssets({
+            apiToken: token,
+            accountId: this.getEffectiveCloudflareAccountId(),
+            scriptName: effectiveSub,
+            outputDir,
+            workspaceDir: this.workspaceDir,
+            compatibilityDate: this.config.cloudflare.compatibility_date || '2024-11-01',
+            accountSubdomain: this.config.cloudflare.account_subdomain || '',
+            onProgress: ({ stage, percent, message, deployedFiles }) => {
+              this.deployJob.stage = stage;
+              this.deployJob.percent = percent;
+              this.deployJob.message = message;
+              if (deployedFiles !== undefined) {
+                this.deployJob.deployed_files = deployedFiles;
+              }
+            },
+            onLog: (m) => this.log(m),
+          });
+
+          if (result.accountSubdomain && result.accountSubdomain !== this.config.cloudflare.account_subdomain) {
+            this.config.cloudflare.account_subdomain = result.accountSubdomain;
+            this.saveConfig();
+          }
+
+          const duration = Number(((Date.now() - startMs) / 1000).toFixed(2));
+          this.deployJob.status = 'success';
+          this.deployJob.stage = 'done';
+          this.deployJob.percent = 100;
+          this.deployJob.completed_at = new Date().toISOString();
+          this.deployJob.live_url = result.liveUrl;
+          this.deployJob.duration = duration;
+          this.deployJob.files_count = result.filesCount;
+          this.deployJob.total_files = result.filesCount;
+          this.deployJob.deployed_files = result.filesCount;
+          this.deployJob.edge_verification = result.edgeVerification;
+          this.deployJob.message = result.edgeVerification.ok
+            ? `Deployed ${result.filesCount} assets to ${result.liveUrl} (Live HTTP ${result.edgeVerification.status}).`
+            : `Deployed ${result.filesCount} assets to ${result.liveUrl} (edge propagating, HTTP ${result.edgeVerification.status || 'pending'}).`;
+          this.log(`[CLOUDFLARE] ${this.deployJob.message}`);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          this.deployJob.status = 'error';
+          this.deployJob.stage = 'error';
+          this.deployJob.percent = 100;
+          this.deployJob.completed_at = new Date().toISOString();
+          this.deployJob.error = msg;
+          this.deployJob.errors = [msg];
+          this.deployJob.message = msg;
+          this.log(`[CLOUDFLARE ERROR] ${msg}`);
+        }
+      })();
+    }
 
     return {
       success: true,
@@ -1490,7 +2071,7 @@ export class DashboardStore {
       job_id: `deploy_${Date.now()}`,
       message: dryRun
         ? 'Cloudflare dry-run simulation started.'
-        : 'Cloudflare deployment job started in background.',
+        : 'Cloudflare Workers deployment job started in background.',
       job: this.deployJob,
     };
   }
@@ -1531,7 +2112,7 @@ export class DashboardStore {
         return;
       }
 
-      if (!this.config.github.token || !this.config.github.owner || !this.config.github.repo) {
+      if (!this.getEffectiveGitHubToken() || !this.config.github.owner || !this.config.github.repo) {
         const err = 'GitHub token, owner, and repo must be configured before live deployment (or enable Dry Run).';
         this.deployJob.status = 'failed';
         this.deployJob.completed_at = new Date().toISOString();
@@ -1558,6 +2139,1129 @@ export class DashboardStore {
       message: 'Deployment job started in background.',
       dry_run: dryRun,
       job: this.deployJob,
+    };
+  }
+
+  rebuildSinglePost(
+    slug: string,
+    opts: {
+      targetCloud?: string;
+      subdomain?: string;
+      theme?: string;
+      routingMode?: string;
+      previousCategorySlug?: string;
+    } = {}
+  ): {
+    outputDir: string;
+    token: string;
+    post: PostItem;
+    postRoute: { web_path: string; file_path: string };
+    changedFiles: string[];
+    fullBootstrap: boolean;
+  } {
+    const post = this.manifest.posts[slug];
+    if (!post) {
+      throw new Error(`Post '${slug}' not found in active project.`);
+    }
+
+    const activeProj = this.projects[this.activeProjectId];
+    const targetCloud = (opts.targetCloud || activeProj?.platform || 'cloudflare').toLowerCase();
+    const effectiveSub = (
+      opts.subdomain ||
+      (targetCloud === 'cloudflare' ? this.config.cloudflare.project_name : '') ||
+      this.activeProjectId ||
+      'stylesdays'
+    ).trim();
+    const { token, outputDir } = this.resolveOutputDir(targetCloud, effectiveSub, effectiveSub);
+    const effectiveTheme = opts.theme || activeProj?.theme || this.config.build.theme || 'nordic-studio';
+    const effectiveRouting = normalizeRoutingMode(
+      opts.routingMode || activeProj?.routing_mode || this.config.build.routing_mode || 'single'
+    );
+
+    const postRoute = resolvePostRoute(post, effectiveRouting);
+    const changedSet = new Set<string>();
+    let fullBootstrap = false;
+
+    // If dist output hasn't been built yet on disk, bootstrap once so existing pages stay intact on Cloudflare/GitHub
+    if (!fs.existsSync(path.join(outputDir, 'index.html'))) {
+      this.runBuild({
+        clean: false,
+        targetCloud,
+        subdomain: effectiveSub,
+        projectName: effectiveSub,
+        theme: effectiveTheme,
+        routingMode: effectiveRouting,
+      });
+      fullBootstrap = true;
+    }
+
+    fs.mkdirSync(outputDir, { recursive: true });
+    this.ensureSvgAssetsForPosts();
+
+    const posts = Object.values(this.manifest.posts);
+    const categories = deriveCategories(this.manifest.posts);
+    const customDomain = activeProj?.cf_custom_domain || this.config.cloudflare.custom_domain || '';
+    const baseUrl = customDomain
+      ? `https://${stripProtocol(customDomain)}`
+      : getCloudflareLiveUrl({
+          ...this.config.cloudflare,
+          project_name: effectiveSub,
+        });
+
+    // 1. Rebuild ONLY this edited post's HTML file
+    const targetPostFile = path.join(outputDir, postRoute.file_path);
+    fs.mkdirSync(path.dirname(targetPostFile), { recursive: true });
+    const postHtml = renderPostHtml({
+      post,
+      allPosts: posts,
+      themeKey: effectiveTheme,
+      branding: this.config.branding,
+      categories,
+      routingMode: effectiveRouting,
+      baseUrl,
+      customDomain,
+      projectName: token,
+    });
+    fs.writeFileSync(targetPostFile, postHtml, 'utf-8');
+    changedSet.add(postRoute.file_path);
+
+    // 2. Rebuild ONLY affected category index page(s) (current category + previous category if changed)
+    const affectedCatSlugs = new Set<string>();
+    if (post.category_slug) affectedCatSlugs.add(post.category_slug);
+    if (opts.previousCategorySlug && opts.previousCategorySlug !== post.category_slug) {
+      affectedCatSlugs.add(opts.previousCategorySlug);
+    }
+    for (const catSlug of affectedCatSlugs) {
+      const catObj = categories.find((c) => c.slug === catSlug);
+      if (!catObj) continue;
+      const catPosts = posts.filter((p) => p.category_slug === catSlug);
+      const catHtml = renderCategoryIndexHtml({
+        category: catObj,
+        posts: catPosts,
+        categories,
+        themeKey: effectiveTheme,
+        branding: this.config.branding,
+        routingMode: effectiveRouting,
+        baseUrl,
+        customDomain,
+        projectName: token,
+      });
+      const catDir = path.join(outputDir, catSlug);
+      fs.mkdirSync(catDir, { recursive: true });
+      fs.writeFileSync(path.join(catDir, 'index.html'), catHtml, 'utf-8');
+      changedSet.add(`${catSlug}/index.html`);
+
+      const catAliasDir = path.join(outputDir, 'category', catSlug);
+      fs.mkdirSync(catAliasDir, { recursive: true });
+      fs.writeFileSync(path.join(catAliasDir, 'index.html'), catHtml, 'utf-8');
+      changedSet.add(`category/${catSlug}/index.html`);
+    }
+
+    // 3. Rebuild homepage index.html so updated headline/excerpt/card reflects immediately
+    const hubHtml = renderHubHtml({
+      posts: posts.length > 0 ? posts : getSeedPosts(),
+      categories,
+      themeKey: effectiveTheme,
+      branding: this.config.branding,
+      routingMode: effectiveRouting,
+      baseUrl,
+      customDomain,
+      projectName: token,
+    });
+    fs.writeFileSync(path.join(outputDir, 'index.html'), hubHtml, 'utf-8');
+    changedSet.add('index.html');
+
+    // 4. Copy ONLY missing/new local images referenced by this edited post
+    const srcAssets = path.join(this.workspaceDir, 'assets', 'images');
+    const dstAssets = path.join(outputDir, 'assets', 'images');
+    if (fs.existsSync(srcAssets)) {
+      const postImages = new Set<string>();
+      if (post.local_image_path && post.local_image_path.startsWith('/assets/images/')) {
+        postImages.add(path.basename(post.local_image_path));
+      }
+      if (post.content_html) {
+        for (const m of post.content_html.matchAll(/\/assets\/images\/([a-zA-Z0-9._-]+)/g)) {
+          postImages.add(m[1]);
+        }
+      }
+      if (postImages.size > 0) {
+        fs.mkdirSync(dstAssets, { recursive: true });
+        for (const imgName of postImages) {
+          const srcPath = path.join(srcAssets, imgName);
+          const dstPath = path.join(dstAssets, imgName);
+          if (!fs.existsSync(srcPath) || !fs.statSync(srcPath).isFile()) continue;
+          const needsCopy =
+            !fs.existsSync(dstPath) || fs.statSync(srcPath).size !== fs.statSync(dstPath).size;
+          if (needsCopy) {
+            fs.copyFileSync(srcPath, dstPath);
+            changedSet.add(`assets/images/${imgName}`);
+          }
+        }
+      }
+    }
+
+    return {
+      outputDir,
+      token,
+      post,
+      postRoute,
+      changedFiles: Array.from(changedSet),
+      fullBootstrap,
+    };
+  }
+
+  async deploySinglePost(slug: string, body: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+    const startMs = Date.now();
+    const existing = this.getPost(slug);
+    if (!existing) {
+      throw new Error(`Post '${slug}' not found.`);
+    }
+    const previousCategorySlug = existing.category_slug;
+
+    // 1. Save post edits first when supplied in request body
+    const hasPostEdits =
+      body.title !== undefined ||
+      body.excerpt !== undefined ||
+      body.category !== undefined ||
+      body.parent_slug !== undefined ||
+      body.content_html !== undefined;
+    if (hasPostEdits) {
+      this.updatePost(slug, body);
+    }
+
+    const activeProj = this.projects[this.activeProjectId];
+    const requestedPlatform = String(body.platform || body.target_cloud || activeProj?.platform || 'cloudflare')
+      .trim()
+      .toLowerCase();
+    const platform = requestedPlatform === 'github' ? 'github' : 'cloudflare';
+    const dryRun = Boolean(body.dry_run);
+    const effectiveSub = String(
+      body.subdomain ||
+        body.project_name ||
+        (platform === 'cloudflare' ? this.config.cloudflare.project_name : '') ||
+        this.activeProjectId ||
+        'stylesdays'
+    ).trim();
+
+    // 2. Incrementally rebuild ONLY this post + its category/hub pages
+    const rebuilt = this.rebuildSinglePost(slug, {
+      targetCloud: platform,
+      subdomain: effectiveSub,
+      theme: typeof body.theme === 'string' ? body.theme : undefined,
+      routingMode: typeof body.routing_mode === 'string' ? body.routing_mode : undefined,
+      previousCategorySlug,
+    });
+
+    const customDomain = activeProj?.cf_custom_domain || this.config.cloudflare.custom_domain || '';
+
+    if (platform === 'github') {
+      const owner = String(body.owner || this.config.github.owner || '').trim();
+      const repo = String(body.repo || this.config.github.repo || '').trim();
+      const branch = String(body.branch || this.config.github.branch || 'main').trim() || 'main';
+      const ghPagesBase = customDomain
+        ? `https://${stripProtocol(customDomain)}`
+        : repo.endsWith('.github.io')
+          ? `https://${repo}`
+          : owner && repo
+            ? `https://${owner}.github.io/${repo}`
+            : `https://${effectiveSub}.github.io`;
+      const postUrl = `${ghPagesBase}${rebuilt.postRoute.web_path}`;
+
+      if (dryRun) {
+        const duration = Number(((Date.now() - startMs) / 1000).toFixed(2));
+        const msg = `[DRY-RUN] Single-post GitHub update ready: ${rebuilt.changedFiles.length} changed file(s) for '${slug}' (${duration}s).`;
+        this.log(`[POST DEPLOY] ${msg}`);
+        return {
+          success: true,
+          dry_run: true,
+          platform: 'github',
+          slug,
+          post: rebuilt.post,
+          post_url: postUrl,
+          live_url: ghPagesBase,
+          changed_files: rebuilt.changedFiles,
+          uploaded_files: rebuilt.changedFiles.length,
+          cached_files: 0,
+          full_bootstrap: rebuilt.fullBootstrap,
+          duration,
+          message: msg,
+        };
+      }
+
+      const ghToken = this.getEffectiveGitHubToken();
+      if (!ghToken || !owner || !repo) {
+        throw new Error(
+          'GitHub token, owner, and repo must be configured in Settings before deploying a post to GitHub Pages.'
+        );
+      }
+
+      const headers: Record<string, string> = {
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'pSEO-Dashboard/2.0',
+        Authorization: `Bearer ${ghToken}`,
+        'Content-Type': 'application/json',
+      };
+
+      let pushedCount = 0;
+      for (const relPath of rebuilt.changedFiles) {
+        const localFile = path.join(rebuilt.outputDir, relPath);
+        if (!fs.existsSync(localFile)) continue;
+        const encodedPath = relPath
+          .split('/')
+          .map((seg) => encodeURIComponent(seg))
+          .join('/');
+        const apiUrl = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodedPath}`;
+
+        let existingSha: string | undefined;
+        const getRes = await fetch(`${apiUrl}?ref=${encodeURIComponent(branch)}`, {
+          headers,
+          signal: AbortSignal.timeout(15000),
+        });
+        if (getRes.ok) {
+          const getData = (await getRes.json().catch(() => ({}))) as { sha?: string };
+          if (getData.sha) existingSha = getData.sha;
+        }
+
+        const contentBase64 = fs.readFileSync(localFile).toString('base64');
+        const putRes = await fetch(apiUrl, {
+          method: 'PUT',
+          headers,
+          body: JSON.stringify({
+            message: `Update post '${slug}' (${relPath})`,
+            content: contentBase64,
+            branch,
+            ...(existingSha ? { sha: existingSha } : {}),
+          }),
+          signal: AbortSignal.timeout(20000),
+        });
+        if (!putRes.ok) {
+          const errText = await putRes.text().catch(() => `HTTP ${putRes.status}`);
+          throw new Error(`GitHub single-post update failed for '${relPath}': ${errText}`);
+        }
+        pushedCount += 1;
+      }
+
+      const duration = Number(((Date.now() - startMs) / 1000).toFixed(2));
+      const msg = `Updated post '${slug}' on GitHub (${pushedCount} changed file(s) pushed, rest of project untouched) in ${duration}s.`;
+      this.log(`[POST DEPLOY] ${msg}`);
+      return {
+        success: true,
+        platform: 'github',
+        slug,
+        post: rebuilt.post,
+        post_url: postUrl,
+        live_url: ghPagesBase,
+        changed_files: rebuilt.changedFiles,
+        uploaded_files: pushedCount,
+        cached_files: 0,
+        full_bootstrap: rebuilt.fullBootstrap,
+        duration,
+        message: msg,
+      };
+    }
+
+    // Cloudflare Workers incremental single-post deployment
+    const fallbackLiveUrl = getCloudflareLiveUrl({
+      ...this.config.cloudflare,
+      project_name: effectiveSub,
+    });
+    const publicBaseUrl = customDomain ? `https://${stripProtocol(customDomain)}` : fallbackLiveUrl;
+
+    if (dryRun) {
+      const duration = Number(((Date.now() - startMs) / 1000).toFixed(2));
+      const msg = `[DRY-RUN] Rebuilt ${rebuilt.changedFiles.length} file(s) for post '${slug}' without full rebuild (${duration}s).`;
+      this.log(`[POST DEPLOY] ${msg}`);
+      return {
+        success: true,
+        dry_run: true,
+        platform: 'cloudflare',
+        slug,
+        post: rebuilt.post,
+        post_url: `${publicBaseUrl}${rebuilt.postRoute.web_path}`,
+        live_url: fallbackLiveUrl,
+        changed_files: rebuilt.changedFiles,
+        uploaded_files: rebuilt.changedFiles.length,
+        cached_files: 0,
+        full_bootstrap: rebuilt.fullBootstrap,
+        duration,
+        message: msg,
+      };
+    }
+
+    const cfToken = this.getEffectiveCloudflareToken();
+    if (!cfToken) {
+      throw new Error(
+        'Cloudflare API Token is not configured. Set CLOUDFLARE_API_TOKEN or enter it in Settings.'
+      );
+    }
+
+    this.log(
+      `[POST DEPLOY] Incremental deploy for post '${slug}' (${rebuilt.changedFiles.length} local file(s) regenerated)...`
+    );
+
+    const result = await deployCloudflareWorkersAssets({
+      apiToken: cfToken,
+      accountId: this.getEffectiveCloudflareAccountId(),
+      scriptName: effectiveSub,
+      outputDir: rebuilt.outputDir,
+      workspaceDir: this.workspaceDir,
+      compatibilityDate: this.config.cloudflare.compatibility_date || '2024-11-01',
+      accountSubdomain: this.config.cloudflare.account_subdomain || '',
+      verifyPath: rebuilt.postRoute.web_path,
+      onLog: (m) => this.log(m),
+    });
+
+    if (result.accountSubdomain && result.accountSubdomain !== this.config.cloudflare.account_subdomain) {
+      this.config.cloudflare.account_subdomain = result.accountSubdomain;
+      this.saveConfig();
+    }
+
+    const duration = Number(((Date.now() - startMs) / 1000).toFixed(2));
+    const postUrl = `${result.liveUrl}${rebuilt.postRoute.web_path}`;
+    const customPostUrl = customDomain ? `https://${stripProtocol(customDomain)}${rebuilt.postRoute.web_path}` : postUrl;
+    const msg = `Post '${slug}' deployed live: ${result.uploadedFiles} changed file(s) uploaded, ${result.cachedFiles} unchanged cached on edge (${duration}s).`;
+    this.log(`[POST DEPLOY] ${msg}`);
+
+    return {
+      success: true,
+      platform: 'cloudflare',
+      slug,
+      post: rebuilt.post,
+      post_url: customPostUrl,
+      worker_post_url: postUrl,
+      live_url: result.liveUrl,
+      changed_files: rebuilt.changedFiles,
+      uploaded_files: result.uploadedFiles,
+      cached_files: result.cachedFiles,
+      total_files: result.filesCount,
+      full_bootstrap: rebuilt.fullBootstrap,
+      edge_verification: result.edgeVerification,
+      duration,
+      message: msg,
+    };
+  }
+
+  private async resolveLiveWorkerBaseUrl(opts: { workerUrl?: string; subdomain?: string } = {}): Promise<{
+    baseUrl: string;
+    scriptName: string;
+    accountSubdomain: string;
+  }> {
+    const activeProj = this.projects[this.activeProjectId];
+    const rawWorkerOverride = String(opts.workerUrl || '').trim();
+    const rawSub = String(
+      opts.subdomain || this.config.cloudflare.project_name || this.activeProjectId || 'stylesdays'
+    ).trim();
+    const scriptName = sanitizeWorkerScriptName(rawSub);
+    let accountSubdomain = String(this.config.cloudflare.account_subdomain || '').trim().toLowerCase();
+
+    if (!accountSubdomain) {
+      const cfToken = this.getEffectiveCloudflareToken();
+      const accountId = this.getEffectiveCloudflareAccountId();
+      if (cfToken && accountId) {
+        try {
+          const subRes = await fetch(
+            `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/workers/subdomain`,
+            {
+              headers: { Authorization: `Bearer ${cfToken}` },
+              signal: AbortSignal.timeout(10000),
+            }
+          );
+          if (subRes.ok) {
+            const subData = (await subRes.json().catch(() => ({}))) as {
+              result?: { subdomain?: string };
+            };
+            if (subData.result?.subdomain) {
+              accountSubdomain = subData.result.subdomain.trim().toLowerCase();
+              this.config.cloudflare.account_subdomain = accountSubdomain;
+              this.saveConfig();
+            }
+          }
+        } catch {
+          // Ignore optional subdomain probe errors
+        }
+      }
+    }
+
+    if (rawWorkerOverride) {
+      const normalized = /^https?:\/\//i.test(rawWorkerOverride)
+        ? rawWorkerOverride.replace(/\/+$/, '')
+        : `https://${rawWorkerOverride.replace(/\/+$/, '')}`;
+      return { baseUrl: normalized, scriptName, accountSubdomain };
+    }
+
+    const rawCustom = stripProtocol(activeProj?.cf_custom_domain || this.config.cloudflare.custom_domain || '')
+      .split('/')[0]
+      .trim();
+    // Only treat custom domain as a live URL host when it contains a real domain dot (e.g. site.com)
+    if (rawCustom && rawCustom.includes('.')) {
+      return { baseUrl: `https://${rawCustom}`, scriptName, accountSubdomain };
+    }
+
+    const workerBase = accountSubdomain
+      ? `https://${scriptName}.${accountSubdomain}.workers.dev`
+      : `https://${scriptName}.workers.dev`;
+    return { baseUrl: workerBase, scriptName, accountSubdomain };
+  }
+
+  async fetchLiveWorkerPosts(opts: {
+    workerUrl?: string;
+    subdomain?: string;
+    forceRefresh?: boolean;
+  } = {}): Promise<Record<string, unknown>> {
+    const startMs = Date.now();
+    const { baseUrl, scriptName } = await this.resolveLiveWorkerBaseUrl(opts);
+    const trustSlugs = new Set([
+      '',
+      'about',
+      'contact',
+      'editorial-policy',
+      'fact-checking-policy',
+      'privacy-policy',
+      'cookie-policy',
+      'terms',
+      'disclaimer',
+      'copyright',
+      'sitemap',
+    ]);
+
+    const discoveredArticles = new Map<string, { webPath: string; titleHint: string }>();
+    const knownCategoryPaths = new Set<string>();
+    const normalizeWebPath = (rawHref: string): string => {
+      try {
+        const u = new URL(rawHref, `${baseUrl}/`);
+        if (u.origin !== new URL(`${baseUrl}/`).origin) return '';
+        let p = u.pathname || '/';
+        if (!p.startsWith('/')) p = `/${p}`;
+        if (!p.endsWith('/') && !path.extname(p)) p = `${p}/`;
+        return p;
+      } catch {
+        return '';
+      }
+    };
+
+    // 1. Primary discovery: fetch /sitemap/ HTML page (explicitly separates Categories vs Published Articles)
+    try {
+      const htmlSitemapRes = await fetch(`${baseUrl}/sitemap/`, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; pSEO-Hub/2.0)' },
+        signal: AbortSignal.timeout(15000),
+      });
+      if (htmlSitemapRes.ok) {
+        const htmlText = await htmlSitemapRes.text();
+        const $ = cheerio.load(htmlText);
+        $('h2').each((_idx, el) => {
+          const heading = $(el).text().trim().toLowerCase();
+          const list = $(el).nextAll('ul').first();
+          if (!list.length) return;
+          if (heading.includes('categories')) {
+            list.find('a[href]').each((_i, a) => {
+              const p = normalizeWebPath($(a).attr('href') || '');
+              if (p) knownCategoryPaths.add(p);
+            });
+          } else if (heading.includes('published articles')) {
+            list.find('a[href]').each((_i, a) => {
+              const p = normalizeWebPath($(a).attr('href') || '');
+              const t = $(a).text().trim();
+              if (!p || p === '/' || p.startsWith('/assets/')) return;
+              const segs = p.split('/').filter(Boolean);
+              const lastSeg = segs[segs.length - 1] || '';
+              if (!lastSeg || trustSlugs.has(lastSeg.toLowerCase())) return;
+              discoveredArticles.set(p, { webPath: p, titleHint: t });
+            });
+          }
+        });
+      }
+    } catch {
+      // Fall back cleanly to /sitemap.xml
+    }
+
+    // 2. Secondary / fallback discovery: fetch /sitemap.xml
+    try {
+      const xmlRes = await fetch(`${baseUrl}/sitemap.xml`, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; pSEO-Hub/2.0)' },
+        signal: AbortSignal.timeout(15000),
+      });
+      if (xmlRes.ok) {
+        const xmlText = await xmlRes.text();
+        const parsed = parseXmlSitemapEntries(xmlText);
+        for (const entry of parsed.entries) {
+          const p = normalizeWebPath(entry.url);
+          if (!p || p === '/' || p.startsWith('/assets/') || p.startsWith('/category/')) continue;
+          if (knownCategoryPaths.has(p)) continue;
+          const segs = p.split('/').filter(Boolean);
+          const lastSeg = segs[segs.length - 1] || '';
+          if (!lastSeg || trustSlugs.has(lastSeg.toLowerCase())) continue;
+          // If /sitemap/ already parsed Categories, any remaining non-category URL is an article;
+          // otherwise we'll verify during HTML inspection below (skipping archive-header pages)
+          if (!discoveredArticles.has(p)) {
+            discoveredArticles.set(p, { webPath: p, titleHint: '' });
+          }
+        }
+      }
+    } catch {
+      // Ignore if sitemap.xml is absent when /sitemap/ already succeeded
+    }
+
+    if (discoveredArticles.size === 0) {
+      throw new Error(
+        `No live posts found at ${baseUrl}. Make sure the Worker '${scriptName}' is deployed and reachable.`
+      );
+    }
+
+    const activeProj = this.projects[this.activeProjectId];
+    const { outputDir } = this.resolveOutputDir('cloudflare', scriptName, scriptName);
+    const hasLocalDist = fs.existsSync(path.join(outputDir, 'index.html'));
+    const assetsDir = path.join(this.workspaceDir, 'assets', 'images');
+    const forceRefresh = Boolean(opts.forceRefresh);
+    const nowIso = new Date().toISOString();
+
+    const entries = Array.from(discoveredArticles.values());
+    let newlyImported = 0;
+    let alreadyLocal = 0;
+    let liveArticlesCount = 0;
+
+    // Fetch missing live post pages in bounded parallel batches (concurrency 6)
+    const BATCH_SIZE = 6;
+    for (let i = 0; i < entries.length; i += BATCH_SIZE) {
+      const batch = entries.slice(i, i + BATCH_SIZE);
+      await Promise.all(
+        batch.map(async ({ webPath, titleHint }) => {
+          const segs = webPath.split('/').filter(Boolean);
+          const slug = slugify(segs[segs.length - 1] || '');
+          if (!slug) return;
+          const parentFromPath = segs.length >= 2 ? slugify(segs[segs.length - 2]) : '';
+
+          const existing = this.manifest.posts[slug];
+          if (existing && !forceRefresh) {
+            liveArticlesCount += 1;
+            alreadyLocal += 1;
+            existing.raw_meta = {
+              ...(existing.raw_meta || {}),
+              live_on_worker: true,
+              worker_url: `${baseUrl}${webPath}`,
+              worker_path: webPath,
+              fetched_from_worker_at: nowIso,
+            };
+            return;
+          }
+
+          try {
+            const pageRes = await fetch(`${baseUrl}${webPath}`, {
+              headers: { 'User-Agent': 'Mozilla/5.0 (compatible; pSEO-Hub/2.0)' },
+              signal: AbortSignal.timeout(12000),
+            });
+            if (!pageRes.ok) return;
+            const htmlText = await pageRes.text();
+            const $ = cheerio.load(htmlText);
+
+            // Skip category archive pages if discovered via sitemap.xml fallback
+            if ($('.archive-header').length > 0 && $('.article-body').length === 0) {
+              return;
+            }
+            if ($('article.article-container').length === 0 && $('.article-body').length === 0) {
+              return;
+            }
+
+            liveArticlesCount += 1;
+
+            const h1Title = $('article h1').first().text().trim();
+            const metaTitle = $('title').first().text().split('—')[0].split('|')[0].trim();
+            const title = h1Title || titleHint || metaTitle || slug;
+            const excerpt =
+              $('meta[name="description"]').attr('content')?.trim() ||
+              $('.article-body p').first().text().trim().slice(0, 220) ||
+              '';
+
+            let category = $('article .kicker').first().text().trim();
+            let categorySlug = '';
+            const breadcrumbLinks = $('nav.breadcrumbs a');
+            if (breadcrumbLinks.length >= 2) {
+              const catLink = breadcrumbLinks.eq(1);
+              if (!category) category = catLink.text().trim();
+              const catHref = (catLink.attr('href') || '').trim();
+              const catSegs = catHref.split('/').filter(Boolean);
+              if (catSegs.length > 0) categorySlug = slugify(catSegs[catSegs.length - 1]);
+            }
+            if (!category) category = 'General';
+            if (!categorySlug) categorySlug = slugify(category) || 'general';
+
+            const heroImgEl = $('.hero-frame img').first();
+            const bodyFirstImg = $('.article-body img').first();
+            const chosenImgEl = heroImgEl.length ? heroImgEl : bodyFirstImg;
+            const rawImgSrc = (chosenImgEl.attr('src') || '').trim();
+            const imgWidth = Number(chosenImgEl.attr('width')) || 1200;
+            const imgHeight = Number(chosenImgEl.attr('height')) || 750;
+            let localImagePath = '';
+            let imageUrl = '';
+            if (rawImgSrc) {
+              if (rawImgSrc.startsWith('/assets/images/')) {
+                localImagePath = rawImgSrc;
+                imageUrl = `${baseUrl}${rawImgSrc}`;
+                // Download missing image locally so catalog thumbnails & future deploys stay complete
+                const localDiskPath = path.join(assetsDir, path.basename(rawImgSrc));
+                if (!fs.existsSync(localDiskPath)) {
+                  try {
+                    const imgRes = await fetch(imageUrl, { signal: AbortSignal.timeout(10000) });
+                    if (imgRes.ok) {
+                      const buf = Buffer.from(await imgRes.arrayBuffer());
+                      if (buf.length > 0 && buf.length < 15 * 1024 * 1024) {
+                        fs.mkdirSync(assetsDir, { recursive: true });
+                        fs.writeFileSync(localDiskPath, buf);
+                        if (hasLocalDist) {
+                          const distImgDir = path.join(outputDir, 'assets', 'images');
+                          fs.mkdirSync(distImgDir, { recursive: true });
+                          fs.writeFileSync(path.join(distImgDir, path.basename(rawImgSrc)), buf);
+                        }
+                      }
+                    }
+                  } catch {
+                    // Best-effort local thumbnail cache
+                  }
+                }
+              } else if (/^https?:\/\//i.test(rawImgSrc)) {
+                imageUrl = rawImgSrc;
+              }
+            }
+
+            const rawBodyHtml = $('.article-body').first().html() || '';
+            const contentHtml = sanitizeEditedHtml(rawBodyHtml);
+            const dateAttr = $('article time').first().attr('datetime')?.trim() || nowIso.slice(0, 10);
+
+            if (existing && existing.custom_edited) {
+              alreadyLocal += 1;
+              existing.raw_meta = {
+                ...(existing.raw_meta || {}),
+                live_on_worker: true,
+                worker_url: `${baseUrl}${webPath}`,
+                worker_path: webPath,
+                fetched_from_worker_at: nowIso,
+              };
+            } else {
+              const importedPost = normalizePost({
+                slug,
+                title,
+                excerpt,
+                content_html: contentHtml,
+                category,
+                category_slug: categorySlug,
+                parent_slug: parentFromPath || categorySlug,
+                date: dateAttr,
+                modified: dateAttr,
+                image_url: imageUrl,
+                local_image_path: localImagePath,
+                image_width: imgWidth,
+                image_height: imgHeight,
+                custom_edited: false,
+                takeaways: [],
+                checklist: [],
+                domain: new URL(`${baseUrl}/`).hostname,
+                raw_meta: {
+                  ...(existing?.raw_meta || {}),
+                  live_on_worker: true,
+                  synced_from_worker: true,
+                  worker_url: `${baseUrl}${webPath}`,
+                  worker_path: webPath,
+                  fetched_from_worker_at: nowIso,
+                },
+              });
+              this.manifest.posts[slug] = importedPost;
+              if (existing) {
+                alreadyLocal += 1;
+              } else {
+                newlyImported += 1;
+              }
+            }
+
+            // Mirror live HTML into local dist/ if dist exists so future single-post deploys/deletes never drop it
+            if (hasLocalDist) {
+              const relFile = path.join(webPath.replace(/^\/+/, ''), 'index.html');
+              const distPostFile = path.join(outputDir, relFile);
+              if (!fs.existsSync(distPostFile)) {
+                fs.mkdirSync(path.dirname(distPostFile), { recursive: true });
+                fs.writeFileSync(distPostFile, htmlText, 'utf-8');
+              }
+            }
+          } catch {
+            // Skip unreachable individual page cleanly
+          }
+        })
+      );
+    }
+
+    this.manifest.categories = deriveCategories(this.manifest.posts);
+    this.saveManifest();
+
+    const duration = Number(((Date.now() - startMs) / 1000).toFixed(2));
+    const totalCatalogPosts = Object.keys(this.manifest.posts).length;
+    const msg = `Fetched ${liveArticlesCount} live post(s) from ${baseUrl} (${newlyImported} newly imported, ${alreadyLocal} already in catalog) in ${duration}s.`;
+    this.log(`[CLOUDFLARE] ${msg}`);
+
+    return {
+      success: true,
+      worker_url: baseUrl,
+      script_name: scriptName,
+      total_live_posts: liveArticlesCount,
+      newly_imported: newlyImported,
+      already_local: alreadyLocal,
+      total_catalog_posts: totalCatalogPosts,
+      categories_count: this.manifest.categories.length,
+      duration,
+      message: msg,
+    };
+  }
+
+  async deletePost(slug: string, opts: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+    const startMs = Date.now();
+    const post = this.manifest.posts[slug];
+    if (!post) {
+      throw new Error(`Post '${slug}' not found.`);
+    }
+
+    const activeProj = this.projects[this.activeProjectId];
+    const requestedPlatform = String(opts.platform || opts.target_cloud || activeProj?.platform || 'cloudflare')
+      .trim()
+      .toLowerCase();
+    const platform = requestedPlatform === 'github' ? 'github' : 'cloudflare';
+    const dryRun = Boolean(opts.dry_run);
+    const removeFromWorker = opts.remove_from_worker !== false;
+    const effectiveSub = String(
+      opts.subdomain ||
+        opts.project_name ||
+        (platform === 'cloudflare' ? this.config.cloudflare.project_name : '') ||
+        this.activeProjectId ||
+        'stylesdays'
+    ).trim();
+    const effectiveTheme = activeProj?.theme || this.config.build.theme || 'nordic-studio';
+    const effectiveRouting = normalizeRoutingMode(
+      activeProj?.routing_mode || this.config.build.routing_mode || 'single'
+    );
+
+    const deletedRoute = resolvePostRoute(post, effectiveRouting);
+    const deletedCategorySlug = post.category_slug;
+    const workerPathFromMeta = String((post.raw_meta && post.raw_meta.worker_path) || '').trim();
+
+    // 1. Remove post from manifest & persist immediately
+    delete this.manifest.posts[slug];
+    this.manifest.categories = deriveCategories(this.manifest.posts);
+    this.saveManifest();
+
+    const remainingPosts = Object.values(this.manifest.posts);
+    const categories = this.manifest.categories;
+    const { token, outputDir } = this.resolveOutputDir(platform, effectiveSub, effectiveSub);
+    const resolvedOut = path.resolve(outputDir);
+    const customDomain = activeProj?.cf_custom_domain || this.config.cloudflare.custom_domain || '';
+    const baseUrl =
+      customDomain && customDomain.includes('.')
+        ? `https://${stripProtocol(customDomain)}`
+        : getCloudflareLiveUrl({
+            ...this.config.cloudflare,
+            project_name: effectiveSub,
+          });
+    const identity = resolveSiteIdentity({
+      customDomain,
+      baseUrl,
+      branding: this.config.branding,
+      projectName: token,
+    });
+
+    const updatedIndexFiles: string[] = [];
+    const removedLocalFiles: string[] = [];
+
+    const safeRemovePostFile = (relFilePath: string) => {
+      const normalizedRel = relFilePath.replace(/^\/+/, '');
+      if (!normalizedRel) return;
+      const absTarget = path.resolve(resolvedOut, normalizedRel);
+      if (!absTarget.startsWith(resolvedOut + path.sep)) return;
+      if (fs.existsSync(absTarget) && fs.statSync(absTarget).isFile()) {
+        fs.unlinkSync(absTarget);
+        removedLocalFiles.push(normalizedRel);
+      }
+      // Prune empty post directory (e.g. dist/<project>/<slug>/) without touching outputDir root
+      const parentDir = path.dirname(absTarget);
+      if (parentDir !== resolvedOut && parentDir.startsWith(resolvedOut + path.sep) && fs.existsSync(parentDir)) {
+        try {
+          if (fs.readdirSync(parentDir).length === 0) {
+            fs.rmdirSync(parentDir);
+          }
+        } catch {
+          // Non-empty directory (e.g. shared parent category folder), leave intact
+        }
+      }
+    };
+
+    // 2. Update local build output incrementally (remove ONLY deleted post + refresh index/category/sitemap)
+    if (!fs.existsSync(path.join(resolvedOut, 'index.html'))) {
+      this.runBuild({
+        clean: false,
+        targetCloud: platform,
+        subdomain: effectiveSub,
+        projectName: effectiveSub,
+        theme: effectiveTheme,
+        routingMode: effectiveRouting,
+      });
+      updatedIndexFiles.push('index.html', 'sitemap.xml', 'sitemap/index.html');
+    } else {
+      safeRemovePostFile(deletedRoute.file_path);
+      if (deletedRoute.file_path !== `${slug}/index.html`) {
+        safeRemovePostFile(`${slug}/index.html`);
+      }
+      if (workerPathFromMeta) {
+        const metaFile = path.join(workerPathFromMeta.replace(/^\/+/, ''), 'index.html');
+        if (metaFile !== deletedRoute.file_path) {
+          safeRemovePostFile(metaFile);
+        }
+      }
+
+      // 2a. Update homepage index.html
+      const hubHtml = renderHubHtml({
+        posts: remainingPosts.length > 0 ? remainingPosts : getSeedPosts(),
+        categories,
+        themeKey: effectiveTheme,
+        branding: this.config.branding,
+        routingMode: effectiveRouting,
+        baseUrl,
+        customDomain,
+        projectName: token,
+      });
+      fs.writeFileSync(path.join(resolvedOut, 'index.html'), hubHtml, 'utf-8');
+      updatedIndexFiles.push('index.html');
+
+      // 2b. Update or remove affected category index page(s)
+      if (deletedCategorySlug) {
+        const catObj = categories.find((c) => c.slug === deletedCategorySlug);
+        if (catObj) {
+          const catPosts = remainingPosts.filter((p) => p.category_slug === deletedCategorySlug);
+          const catHtml = renderCategoryIndexHtml({
+            category: catObj,
+            posts: catPosts,
+            categories,
+            themeKey: effectiveTheme,
+            branding: this.config.branding,
+            routingMode: effectiveRouting,
+            baseUrl,
+            customDomain,
+            projectName: token,
+          });
+          const catDir = path.join(resolvedOut, deletedCategorySlug);
+          fs.mkdirSync(catDir, { recursive: true });
+          fs.writeFileSync(path.join(catDir, 'index.html'), catHtml, 'utf-8');
+          updatedIndexFiles.push(`${deletedCategorySlug}/index.html`);
+
+          const catAliasDir = path.join(resolvedOut, 'category', deletedCategorySlug);
+          fs.mkdirSync(catAliasDir, { recursive: true });
+          fs.writeFileSync(path.join(catAliasDir, 'index.html'), catHtml, 'utf-8');
+          updatedIndexFiles.push(`category/${deletedCategorySlug}/index.html`);
+        } else {
+          safeRemovePostFile(`${deletedCategorySlug}/index.html`);
+          safeRemovePostFile(`category/${deletedCategorySlug}/index.html`);
+        }
+      }
+
+      // 2c. Update sitemap/index.html & sitemap.xml so deleted post disappears from sitemaps
+      const trustPages = buildTrustPages({
+        identity,
+        posts: remainingPosts,
+        categories,
+        routingMode: effectiveRouting,
+      });
+      const htmlSitemapPage = trustPages.find((p) => p.slug === 'sitemap');
+      if (htmlSitemapPage) {
+        const smDir = path.join(resolvedOut, 'sitemap');
+        fs.mkdirSync(smDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(smDir, 'index.html'),
+          renderStaticPageHtml({
+            page: htmlSitemapPage,
+            categories,
+            themeKey: effectiveTheme,
+            branding: this.config.branding,
+            identity,
+          }),
+          'utf-8'
+        );
+        updatedIndexFiles.push('sitemap/index.html');
+      }
+
+      const sitemapUrls: string[] = [`${baseUrl}/`];
+      for (const p of remainingPosts) {
+        sitemapUrls.push(`${baseUrl}${resolvePostRoute(p, effectiveRouting).web_path}`);
+      }
+      for (const c of categories) {
+        sitemapUrls.push(`${baseUrl}/${c.slug}/`);
+      }
+      for (const tp of trustPages) {
+        sitemapUrls.push(`${baseUrl}/${tp.slug}/`);
+      }
+      const sitemapXml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${sitemapUrls
+        .map((u) => `  <url><loc>${u}</loc></url>`)
+        .join('\n')}\n</urlset>\n`;
+      fs.writeFileSync(path.join(resolvedOut, 'sitemap.xml'), sitemapXml, 'utf-8');
+      updatedIndexFiles.push('sitemap.xml');
+    }
+
+    // 3. Push direct removal to Cloudflare Worker or GitHub Pages without full rebuild
+    if (dryRun) {
+      const duration = Number(((Date.now() - startMs) / 1000).toFixed(2));
+      const msg = `[DRY-RUN] Deleted '${slug}' locally & updated ${updatedIndexFiles.length} index file(s) without full rebuild (${duration}s).`;
+      this.log(`[POST DELETE] ${msg}`);
+      return {
+        success: true,
+        dry_run: true,
+        platform,
+        slug,
+        removed_locally: true,
+        removed_from_worker: false,
+        removed_files: removedLocalFiles,
+        updated_index_files: updatedIndexFiles,
+        remaining_posts: remainingPosts.length,
+        duration,
+        message: msg,
+      };
+    }
+
+    if (removeFromWorker && platform === 'github') {
+      const ghToken = this.getEffectiveGitHubToken();
+      const owner = String(opts.owner || this.config.github.owner || '').trim();
+      const repo = String(opts.repo || this.config.github.repo || '').trim();
+      const branch = String(opts.branch || this.config.github.branch || 'main').trim() || 'main';
+
+      if (ghToken && owner && repo) {
+        const headers: Record<string, string> = {
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'pSEO-Dashboard/2.0',
+          Authorization: `Bearer ${ghToken}`,
+          'Content-Type': 'application/json',
+        };
+        const encodePath = (p: string) => p.split('/').map((s) => encodeURIComponent(s)).join('/');
+        const targetDelPath = deletedRoute.file_path;
+        const delApiUrl = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodePath(targetDelPath)}`;
+
+        // Fetch existing SHA and delete the post file directly from GitHub
+        const getRes = await fetch(`${delApiUrl}?ref=${encodeURIComponent(branch)}`, {
+          headers,
+          signal: AbortSignal.timeout(15000),
+        });
+        if (getRes.ok) {
+          const getData = (await getRes.json().catch(() => ({}))) as { sha?: string };
+          if (getData.sha) {
+            const delRes = await fetch(delApiUrl, {
+              method: 'DELETE',
+              headers,
+              body: JSON.stringify({
+                message: `Delete post '${slug}'`,
+                sha: getData.sha,
+                branch,
+              }),
+              signal: AbortSignal.timeout(20000),
+            });
+            if (!delRes.ok) {
+              const errText = await delRes.text().catch(() => `HTTP ${delRes.status}`);
+              throw new Error(`GitHub delete failed for '${targetDelPath}': ${errText}`);
+            }
+          }
+        }
+
+        // Update only the affected index/sitemap files
+        for (const relPath of updatedIndexFiles) {
+          const localFile = path.join(resolvedOut, relPath);
+          if (!fs.existsSync(localFile)) continue;
+          const apiUrl = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodePath(relPath)}`;
+          let existingSha: string | undefined;
+          const idxGet = await fetch(`${apiUrl}?ref=${encodeURIComponent(branch)}`, {
+            headers,
+            signal: AbortSignal.timeout(15000),
+          });
+          if (idxGet.ok) {
+            const d = (await idxGet.json().catch(() => ({}))) as { sha?: string };
+            if (d.sha) existingSha = d.sha;
+          }
+          await fetch(apiUrl, {
+            method: 'PUT',
+            headers,
+            body: JSON.stringify({
+              message: `Update index after deleting '${slug}' (${relPath})`,
+              content: fs.readFileSync(localFile).toString('base64'),
+              branch,
+              ...(existingSha ? { sha: existingSha } : {}),
+            }),
+            signal: AbortSignal.timeout(20000),
+          });
+        }
+
+        const duration = Number(((Date.now() - startMs) / 1000).toFixed(2));
+        const msg = `Deleted post '${slug}' directly from GitHub (${owner}/${repo}) without full redeploy (${duration}s).`;
+        this.log(`[POST DELETE] ${msg}`);
+        return {
+          success: true,
+          platform: 'github',
+          slug,
+          removed_locally: true,
+          removed_from_worker: true,
+          deleted_file: targetDelPath,
+          updated_index_files: updatedIndexFiles,
+          remaining_posts: remainingPosts.length,
+          duration,
+          message: msg,
+        };
+      }
+    }
+
+    if (removeFromWorker && platform === 'cloudflare') {
+      const cfToken = this.getEffectiveCloudflareToken();
+      if (cfToken) {
+        this.log(`[POST DELETE] Removing '${slug}' directly from live Cloudflare Worker '${effectiveSub}'...`);
+        const result = await deployCloudflareWorkersAssets({
+          apiToken: cfToken,
+          accountId: this.getEffectiveCloudflareAccountId(),
+          scriptName: effectiveSub,
+          outputDir: resolvedOut,
+          workspaceDir: this.workspaceDir,
+          compatibilityDate: this.config.cloudflare.compatibility_date || '2024-11-01',
+          accountSubdomain: this.config.cloudflare.account_subdomain || '',
+          verifyPath: '/',
+          onLog: (m) => this.log(m),
+        });
+
+        if (result.accountSubdomain && result.accountSubdomain !== this.config.cloudflare.account_subdomain) {
+          this.config.cloudflare.account_subdomain = result.accountSubdomain;
+          this.saveConfig();
+        }
+
+        const duration = Number(((Date.now() - startMs) / 1000).toFixed(2));
+        const msg = `Removed '${slug}' directly from live Cloudflare Worker (${result.uploadedFiles} index file(s) synced, ${result.cachedFiles} unchanged cached on edge) in ${duration}s.`;
+        this.log(`[POST DELETE] ${msg}`);
+        return {
+          success: true,
+          platform: 'cloudflare',
+          slug,
+          removed_locally: true,
+          removed_from_worker: true,
+          live_url: result.liveUrl,
+          uploaded_files: result.uploadedFiles,
+          cached_files: result.cachedFiles,
+          total_files: result.filesCount,
+          removed_files: removedLocalFiles,
+          updated_index_files: updatedIndexFiles,
+          remaining_posts: remainingPosts.length,
+          duration,
+          message: msg,
+        };
+      }
+    }
+
+    const duration = Number(((Date.now() - startMs) / 1000).toFixed(2));
+    const msg = `Deleted '${slug}' from local catalog (${remainingPosts.length} posts remaining). Configure credentials to sync removal to live edge.`;
+    this.log(`[POST DELETE] ${msg}`);
+    return {
+      success: true,
+      platform,
+      slug,
+      removed_locally: true,
+      removed_from_worker: false,
+      removed_files: removedLocalFiles,
+      updated_index_files: updatedIndexFiles,
+      remaining_posts: remainingPosts.length,
+      duration,
+      message: msg,
     };
   }
 }

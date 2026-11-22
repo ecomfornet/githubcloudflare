@@ -20,6 +20,11 @@
     isDeploying: false,
     deployPollInterval: null,
     ingestPollInterval: null,
+    allCategories: [],
+    allCategoriesProject: null,
+    editorMode: 'visual',
+    rteSavedRange: null,
+    rteInlineAction: null,
   };
 
   const State = state; // Safe alias preventing ReferenceError: State is not defined
@@ -138,6 +143,12 @@
     ingestProgressBar: document.getElementById('ingestProgressBar'),
     btnStep1Next: document.getElementById('btnStep1Next'),
     syncAssetsBtn: document.getElementById('syncAssetsBtn'),
+    stopIngestBtn: document.getElementById('stopIngestBtn'),
+    clearProjectBtn: document.getElementById('clearProjectBtn'),
+    scanResultBanner: document.getElementById('scanResultBanner'),
+    clearProjectConfirmBar: document.getElementById('clearProjectConfirmBar'),
+    btnConfirmClearProject: document.getElementById('btnConfirmClearProject'),
+    btnCancelClearProject: document.getElementById('btnCancelClearProject'),
     syncAssetsDeployBtn: document.getElementById('syncAssetsDeployBtn'),
     diffResultsBox: document.getElementById('diffResultsBox'),
     diffNewCount: document.getElementById('diffNewCount'),
@@ -150,15 +161,38 @@
     postSearchInput: document.getElementById('postSearchInput'),
     postCategoryFilter: document.getElementById('postCategoryFilter'),
     postStatusFilter: document.getElementById('postStatusFilter'),
+    catalogCategoryPills: document.getElementById('catalogCategoryPills'),
+    fetchWorkerPostsBtn: document.getElementById('fetchWorkerPostsBtn'),
+    catalogWorkerStatus: document.getElementById('catalogWorkerStatus'),
 
     // Modal Editor
     postEditModal: document.getElementById('postEditModal'),
     modalPostSlugTitle: document.getElementById('modalPostSlugTitle'),
+    modalPostCatBadge: document.getElementById('modalPostCatBadge'),
     editPostForm: document.getElementById('editPostForm'),
     editPostSlug: document.getElementById('editPostSlug'),
     editPostTitle: document.getElementById('editPostTitle'),
+    editPostExcerpt: document.getElementById('editPostExcerpt'),
     editPostCategory: document.getElementById('editPostCategory'),
     editPostParentSlug: document.getElementById('editPostParentSlug'),
+    editPostRichEditor: document.getElementById('editPostRichEditor'),
+    editPostHtmlSource: document.getElementById('editPostHtmlSource'),
+    rteToolbar: document.getElementById('rteToolbar'),
+    btnEditorVisual: document.getElementById('btnEditorVisual'),
+    btnEditorSource: document.getElementById('btnEditorSource'),
+    editorWordCount: document.getElementById('editorWordCount'),
+    btnRteLink: document.getElementById('btnRteLink'),
+    btnRteImage: document.getElementById('btnRteImage'),
+    rteInlineBar: document.getElementById('rteInlineBar'),
+    rteInlineLabel: document.getElementById('rteInlineLabel'),
+    rteInlineUrl: document.getElementById('rteInlineUrl'),
+    rteInlineText: document.getElementById('rteInlineText'),
+    btnRteInlineApply: document.getElementById('btnRteInlineApply'),
+    btnRteInlineCancel: document.getElementById('btnRteInlineCancel'),
+    saveAndPreviewBtn: document.getElementById('saveAndPreviewBtn'),
+    savePostBtn: document.getElementById('savePostBtn'),
+    saveAndDeployPostBtn: document.getElementById('saveAndDeployPostBtn'),
+    editPostDeployStatus: document.getElementById('editPostDeployStatus'),
     closeModalBtn: document.getElementById('closeModalBtn'),
     cancelEditBtn: document.getElementById('cancelEditBtn'),
 
@@ -433,10 +467,10 @@
 
   function populateActiveProjectFields(proj) {
     if (!proj) return;
-    if (DOM.ingestSitemapUrl && proj.sitemap_url) {
-      DOM.ingestSitemapUrl.value = proj.sitemap_url;
+    if (DOM.ingestSitemapUrl) {
+      DOM.ingestSitemapUrl.value = proj.sitemap_url || '';
     }
-    if (DOM.ingestMaxPosts && proj.max_posts) {
+    if (DOM.ingestMaxPosts && proj.max_posts !== undefined && proj.max_posts !== null) {
       DOM.ingestMaxPosts.value = proj.max_posts;
     }
     if (DOM.ingestDownloadImages && proj.download_images !== undefined) {
@@ -454,6 +488,9 @@
     if (DOM.cfgStep1GithubRepo && proj.github_repo !== undefined) {
       DOM.cfgStep1GithubRepo.value = proj.github_repo;
     }
+    if (DOM.scanResultBanner) {
+      DOM.scanResultBanner.style.display = 'none';
+    }
     updateCloudflareLiveUrlPreview();
     updateRootDomainPreview();
   }
@@ -462,7 +499,10 @@
     if (!state.activeProject) return;
     const updates = {};
     if (DOM.ingestSitemapUrl) updates.sitemap_url = DOM.ingestSitemapUrl.value.trim();
-    if (DOM.ingestMaxPosts) updates.max_posts = parseInt(DOM.ingestMaxPosts.value, 10) || 60;
+    if (DOM.ingestMaxPosts) {
+      const parsed = parseInt(DOM.ingestMaxPosts.value, 10);
+      updates.max_posts = Number.isNaN(parsed) ? 100 : Math.max(0, parsed);
+    }
     if (DOM.ingestDownloadImages) updates.download_images = DOM.ingestDownloadImages.checked;
     if (DOM.cfgCfProjectName) {
       updates.cf_project_name = DOM.cfgCfProjectName.value.trim();
@@ -667,7 +707,7 @@
     ].filter(Boolean);
     step1Inputs.forEach((el) => {
       el.addEventListener('change', autoSaveActiveProject);
-      if (el.tagName === 'INPUT' && (el.type === 'text' || el.type === 'number')) {
+      if (el.tagName === 'INPUT' && (el.type === 'text' || el.type === 'url' || el.type === 'number')) {
         el.addEventListener('blur', autoSaveActiveProject);
       }
     });
@@ -803,6 +843,8 @@
       const logoImgHtml = `<img src="${logoPath}?t=${Date.now()}" alt="${escapeHtml(bName)}" style="max-height: 48px; max-width: 100%; object-fit: contain;">`;
       if (DOM.quickLogoPreviewBox) DOM.quickLogoPreviewBox.innerHTML = logoImgHtml;
       if (DOM.previewLogoBox) DOM.previewLogoBox.innerHTML = logoImgHtml;
+      if (DOM.quickBrandNameDisplay) DOM.quickBrandNameDisplay.style.display = 'none';
+      if (DOM.previewBrandNameDisplay) DOM.previewBrandNameDisplay.style.display = 'none';
       if (DOM.quickLogoStatusBadge) {
         DOM.quickLogoStatusBadge.textContent = 'Custom Logo Active';
         DOM.quickLogoStatusBadge.style.color = '#34D399';
@@ -812,6 +854,8 @@
     } else {
       if (DOM.quickLogoPreviewBox) DOM.quickLogoPreviewBox.innerHTML = emblemSvg;
       if (DOM.previewLogoBox) DOM.previewLogoBox.innerHTML = emblemSvg;
+      if (DOM.quickBrandNameDisplay) DOM.quickBrandNameDisplay.style.display = '';
+      if (DOM.previewBrandNameDisplay) DOM.previewBrandNameDisplay.style.display = '';
       if (DOM.quickLogoStatusBadge) {
         DOM.quickLogoStatusBadge.textContent = 'Default Emblem Active';
         DOM.quickLogoStatusBadge.style.color = '#F59E0B';
@@ -912,8 +956,12 @@
       DOM.cfgOutputDir.value = bld.output_dir || 'dist_github_pages';
       const ing = cfg.ingestion || {};
       DOM.cfgWpApiUrl.value = ing.wp_api_url || 'stylesdays.com';
-      DOM.ingestSitemapUrl.value = activeProj.sitemap_url || ing.sitemap_url || 'https://stylesdays.com/sitemap_index.xml';
-      DOM.ingestMaxPosts.value = activeProj.max_posts || ing.max_posts || 60;
+      DOM.ingestSitemapUrl.value =
+        activeProj.sitemap_url !== undefined ? activeProj.sitemap_url : (ing.sitemap_url || '');
+      DOM.ingestMaxPosts.value =
+        activeProj.max_posts !== undefined && activeProj.max_posts !== null
+          ? activeProj.max_posts
+          : (ing.max_posts !== undefined ? ing.max_posts : 100);
       DOM.ingestDownloadImages.checked = activeProj.download_images !== undefined ? !!activeProj.download_images : (ing.download_images !== false);
 
       // Populate Branding and pSEO settings
@@ -939,8 +987,129 @@
       DOM.previewRoutingSelect.value = bld.routing_mode || 'single';
       await loadGithubAccounts();
       await refreshPosts();
+      await syncActiveIngestJobUI();
     } catch (err) {
       showToast(`Initialization Error: ${err.message}`, 'error');
+    }
+  }
+
+  function setIngestRunningUI(running, message = '') {
+    state.isIngesting = running;
+    if (DOM.startIngestBtn) {
+      DOM.startIngestBtn.disabled = running;
+      DOM.startIngestBtn.innerHTML = running ? '<span>⏳ Ingesting...</span>' : '<span>🚀 Ingest &amp; Diff</span>';
+    }
+    if (DOM.stopIngestBtn) {
+      DOM.stopIngestBtn.disabled = !running;
+    }
+    if (running && DOM.ingestProgressBarContainer) {
+      DOM.ingestProgressBarContainer.classList.remove('hidden');
+      DOM.ingestProgressBarContainer.style.display = 'block';
+    }
+    if (message && DOM.ingestProgressLabel) {
+      DOM.ingestProgressLabel.textContent = message;
+    }
+  }
+
+  function addDiffRowGlobal(slug, title, status, badgeClass) {
+    if (!DOM.diffSummaryTableBody) return;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><span class="badge ${badgeClass}">${status}</span></td>
+      <td><code>${escapeHtml(slug)}</code></td>
+      <td>${escapeHtml(title)}</td>
+    `;
+    DOM.diffSummaryTableBody.appendChild(tr);
+  }
+
+  function startIngestPolling() {
+    if (state.ingestPollInterval) {
+      clearInterval(state.ingestPollInterval);
+    }
+    state.ingestPollInterval = setInterval(async () => {
+      try {
+        const jobStatus = await api('/api/ingest/status');
+        if (!jobStatus) return;
+        if (jobStatus.status === 'running') {
+          setIngestRunningUI(true);
+          const processed = jobStatus.processed_count || 0;
+          const total = jobStatus.total_count || 0;
+          const pct = total > 0 ? Math.min(95, Math.round((processed / total) * 100)) : 12;
+          if (DOM.ingestProgressBar) {
+            DOM.ingestProgressBar.style.width = `${pct}%`;
+          }
+          if (DOM.ingestProgressCount) {
+            DOM.ingestProgressCount.textContent = total > 0 ? `${processed} / ${total}` : `${processed} processed`;
+          }
+          if (DOM.ingestProgressLabel) {
+            DOM.ingestProgressLabel.textContent =
+              jobStatus.message ||
+              (jobStatus.current_post ? `Processing: ${jobStatus.current_post}` : 'Ingesting articles...');
+          }
+        } else if (jobStatus.status === 'success') {
+          clearInterval(state.ingestPollInterval);
+          state.ingestPollInterval = null;
+          setIngestRunningUI(false, '✅ Ingestion Completed Successfully!');
+          if (DOM.ingestProgressBar) {
+            DOM.ingestProgressBar.style.width = '100%';
+          }
+          if (DOM.ingestProgressCount) {
+            DOM.ingestProgressCount.textContent = `${jobStatus.processed_count || 0} / ${jobStatus.total_count || 0}`;
+          }
+
+          const counts = jobStatus.counts || {};
+          if (DOM.diffNewCount) DOM.diffNewCount.textContent = counts.new || 0;
+          if (DOM.diffUpdatedCount) DOM.diffUpdatedCount.textContent = counts.updated || 0;
+          if (DOM.diffSyncedCount) DOM.diffSyncedCount.textContent = counts.synced || 0;
+          if (DOM.diffResultsBox) DOM.diffResultsBox.style.display = 'block';
+          if (DOM.diffSummaryTableBody) {
+            DOM.diffSummaryTableBody.innerHTML = '';
+            (jobStatus.new_posts || []).forEach((p) => addDiffRowGlobal(p.slug, p.title, 'NEW', 'badge-new'));
+            (jobStatus.updated_posts || []).forEach((p) => addDiffRowGlobal(p.slug, p.title, 'UPDATED', 'badge-updated'));
+            (jobStatus.synced_posts || []).forEach((p) => addDiffRowGlobal(p.slug, p.title, 'SYNCED', 'badge-synced'));
+          }
+          showToast(`Ingestion finished: ${counts.total || jobStatus.processed_count || 0} total posts processed.`, 'success');
+          appendTerminalLog(`Ingested: ${counts.new || 0} new, ${counts.updated || 0} updated, ${counts.synced || 0} synced.`, 'success');
+          await refreshSystem();
+          await refreshPosts();
+          await loadProjects();
+        } else if (jobStatus.status === 'stopped') {
+          clearInterval(state.ingestPollInterval);
+          state.ingestPollInterval = null;
+          setIngestRunningUI(false, `⏹️ ${jobStatus.message || 'Ingestion stopped by user.'}`);
+          showToast(jobStatus.message || 'Ingestion stopped by user.', 'warning');
+          appendTerminalLog(`[INGEST STOPPED] ${jobStatus.message || 'Stopped by user.'}`, 'warning');
+        } else if (jobStatus.status === 'error') {
+          clearInterval(state.ingestPollInterval);
+          state.ingestPollInterval = null;
+          setIngestRunningUI(false, `❌ Ingestion error: ${jobStatus.error || jobStatus.message || 'Unknown error'}`);
+          showToast(`Ingestion error: ${jobStatus.error || jobStatus.message}`, 'error');
+          appendTerminalLog(`[INGEST ERROR] ${jobStatus.error || jobStatus.message}`, 'error');
+        } else {
+          clearInterval(state.ingestPollInterval);
+          state.ingestPollInterval = null;
+          setIngestRunningUI(false);
+        }
+      } catch (pollErr) {
+        console.warn('Error polling ingest status:', pollErr);
+      }
+    }, 800);
+  }
+
+  async function syncActiveIngestJobUI() {
+    try {
+      const jobStatus = await api('/api/ingest/status');
+      if (jobStatus && jobStatus.status === 'running') {
+        setIngestRunningUI(true, jobStatus.message || 'Ingesting articles...');
+        if (DOM.ingestProgressCount && jobStatus.total_count > 0) {
+          DOM.ingestProgressCount.textContent = `${jobStatus.processed_count || 0} / ${jobStatus.total_count}`;
+        }
+        startIngestPolling();
+      } else {
+        setIngestRunningUI(false);
+      }
+    } catch {
+      // Ignore transient status error
     }
   }
 
@@ -1039,21 +1208,65 @@
   }
 
   function populateCategoryFilter() {
-    const cats = new Set();
-    state.posts.forEach((p) => {
-      if (p.category) cats.add(p.category);
-    });
+    const q = DOM.postSearchInput ? DOM.postSearchInput.value.trim() : '';
+    const current = DOM.postCategoryFilter ? DOM.postCategoryFilter.value : '';
+    const statusFilter = DOM.postStatusFilter ? DOM.postStatusFilter.value : '';
+    const isUnfiltered = !q && !current && !statusFilter;
 
-    const current = DOM.postCategoryFilter.value;
-    DOM.postCategoryFilter.innerHTML = '<option value="">All Categories</option>';
-    cats.forEach((c) => {
-      const opt = document.createElement('option');
-      opt.value = c;
-      opt.textContent = c;
-      if (c === current) opt.selected = true;
-      DOM.postCategoryFilter.appendChild(opt);
-    });
+    // Refresh master category index when unfiltered or when switching projects
+    if (isUnfiltered || state.allCategoriesProject !== state.activeProject || state.allCategories.length === 0) {
+      const counts = new Map();
+      state.posts.forEach((p) => {
+        const catName = (p.category || 'General').trim();
+        if (catName) counts.set(catName, (counts.get(catName) || 0) + 1);
+      });
+      state.allCategories = Array.from(counts.entries())
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([name, count]) => ({ name, count }));
+      state.allCategoriesProject = state.activeProject;
+    }
 
+    if (DOM.postCategoryFilter) {
+      DOM.postCategoryFilter.innerHTML = '<option value="">All Categories</option>';
+      state.allCategories.forEach(({ name }) => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        if (name === current) opt.selected = true;
+        DOM.postCategoryFilter.appendChild(opt);
+      });
+    }
+
+    // Render 1-click category quick-filter buttons
+    if (DOM.catalogCategoryPills) {
+      DOM.catalogCategoryPills.innerHTML = '';
+      if (state.allCategories.length > 0) {
+        const totalCount = state.allCategories.reduce((acc, item) => acc + item.count, 0);
+        const allBtn = document.createElement('button');
+        allBtn.type = 'button';
+        allBtn.className = `cat-pill-btn${current === '' ? ' active' : ''}`;
+        allBtn.setAttribute('data-cat', '');
+        allBtn.innerHTML = `<span>All Categories</span><span class="cat-pill-count">${totalCount}</span>`;
+        allBtn.addEventListener('click', () => {
+          DOM.postCategoryFilter.value = '';
+          refreshPosts();
+        });
+        DOM.catalogCategoryPills.appendChild(allBtn);
+
+        state.allCategories.forEach(({ name, count }) => {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = `cat-pill-btn${current === name ? ' active' : ''}`;
+          btn.setAttribute('data-cat', name);
+          btn.innerHTML = `<span>${escapeHtml(name)}</span><span class="cat-pill-count">${count}</span>`;
+          btn.addEventListener('click', () => {
+            DOM.postCategoryFilter.value = name;
+            refreshPosts();
+          });
+          DOM.catalogCategoryPills.appendChild(btn);
+        });
+      }
+    }
   }
 
   // Populate Preview Select
@@ -1162,19 +1375,21 @@
 
         </td>
 
-        <td><span class="badge" style="background: rgba(255,255,255,0.08);">${escapeHtml(post.category || 'General')}</span></td>
+        <td style="white-space: nowrap;"><span class="badge" style="background: rgba(255,255,255,0.08); white-space: nowrap;">${escapeHtml(post.category || 'General')}</span></td>
 
-        <td style="font-size: 0.75rem; color: var(--text-secondary);">${(post.modified || post.date || '').slice(0, 10)}</td>
+        <td style="font-size: 0.75rem; color: var(--text-secondary); white-space: nowrap;">${(post.modified || post.date || '').slice(0, 10)}</td>
 
-        <td>${post.custom_edited ? '✅ Yes' : '—'}</td>
+        <td style="white-space: nowrap;">${post.custom_edited ? '✅ Yes' : '—'}</td>
 
-        <td>
+        <td style="white-space: nowrap;">
 
-          <div style="display: flex; gap: 0.35rem;">
+          <div class="catalog-row-actions">
 
-            <button class="btn btn-secondary btn-sm edit-btn" data-slug="${post.slug}">✏️ Edit</button>
+            <button type="button" class="btn btn-secondary btn-sm edit-btn" data-slug="${escapeHtml(post.slug)}">✏️ Edit Text</button>
 
-            <button class="btn btn-secondary btn-sm preview-btn" data-slug="${post.slug}">👁️ Preview</button>
+            <button type="button" class="btn btn-secondary btn-sm preview-btn" data-slug="${escapeHtml(post.slug)}">👁️ Preview</button>
+
+            <button type="button" class="btn btn-danger-outline btn-sm delete-post-btn" data-slug="${escapeHtml(post.slug)}" title="Delete post from catalog and remove directly from live Worker without full redeploy">🗑️ Delete</button>
 
           </div>
 
@@ -1188,21 +1403,395 @@
         switchTab('tab-preview');
       });
 
+      const delBtn = tr.querySelector('.delete-post-btn');
+      let confirmResetTimer = null;
+      delBtn.addEventListener('click', () => {
+        if (!delBtn.classList.contains('confirming')) {
+          delBtn.classList.add('confirming');
+          delBtn.textContent = '⚠️ Confirm?';
+          confirmResetTimer = setTimeout(() => {
+            delBtn.classList.remove('confirming');
+            delBtn.textContent = '🗑️ Delete';
+          }, 4500);
+          return;
+        }
+        if (confirmResetTimer) clearTimeout(confirmResetTimer);
+        delBtn.classList.remove('confirming');
+        handleDeletePostFromCatalog(post.slug, delBtn);
+      });
+
       DOM.postsCatalogBody.appendChild(tr);
     });
 
   }
 
-  // Open Edit Modal
+  function setCatalogWorkerStatus(type, message, liveUrl = '') {
+    if (!DOM.catalogWorkerStatus) return;
+    if (!type) {
+      DOM.catalogWorkerStatus.style.display = 'none';
+      DOM.catalogWorkerStatus.className = 'catalog-worker-status';
+      DOM.catalogWorkerStatus.innerHTML = '';
+      return;
+    }
+    DOM.catalogWorkerStatus.style.display = 'flex';
+    DOM.catalogWorkerStatus.className = `catalog-worker-status ${type}`;
+    const safeLink =
+      liveUrl && /^https?:\/\//i.test(liveUrl)
+        ? `<a href="${escapeHtml(liveUrl)}" target="_blank" rel="noopener noreferrer" class="rte-deploy-link">Open Live Worker ↗</a>`
+        : '';
+    DOM.catalogWorkerStatus.innerHTML = `<span>${escapeHtml(message)}</span>${safeLink}`;
+  }
 
+  async function handleFetchWorkerPosts() {
+    const origHtml = DOM.fetchWorkerPostsBtn ? DOM.fetchWorkerPostsBtn.innerHTML : '☁️ Fetch All Worker Posts';
+    const workerSubdomain = (DOM.cfgCfProjectName && DOM.cfgCfProjectName.value.trim()) || '';
+
+    try {
+      if (DOM.fetchWorkerPostsBtn) {
+        DOM.fetchWorkerPostsBtn.disabled = true;
+        DOM.fetchWorkerPostsBtn.textContent = '⏳ Fetching Live Posts...';
+      }
+      setCatalogWorkerStatus('loading', '⏳ Discovering & fetching all live posts published inside your Cloudflare Worker...');
+      appendTerminalLog('[CLOUDFLARE] Fetching all live posts from deployed Cloudflare Worker...', 'info');
+
+      const res = await api('/api/cloudflare/fetch-posts', 'POST', {
+        subdomain: workerSubdomain || undefined,
+      });
+
+      const summary = `✅ Loaded ${res.total_live_posts} live post(s) from Worker (${res.newly_imported} newly imported, ${res.already_local} already in catalog · ${res.total_catalog_posts} total).`;
+      setCatalogWorkerStatus('success', summary, res.worker_url || '');
+      showToast(summary, 'success');
+      appendTerminalLog(`[CLOUDFLARE] ${res.message || summary}`, 'success');
+
+      state.allCategories = [];
+      await refreshSystem();
+    } catch (err) {
+      const msg = err && err.message ? err.message : String(err);
+      setCatalogWorkerStatus('error', `❌ Failed to fetch Worker posts: ${msg}`);
+      showToast(`Fetch Worker posts failed: ${msg}`, 'error');
+      appendTerminalLog(`[CLOUDFLARE ERROR] ${msg}`, 'error');
+    } finally {
+      if (DOM.fetchWorkerPostsBtn) {
+        DOM.fetchWorkerPostsBtn.disabled = false;
+        DOM.fetchWorkerPostsBtn.innerHTML = origHtml;
+      }
+    }
+  }
+
+  async function handleDeletePostFromCatalog(slug, btnEl) {
+    const activePlatform = currentPlatformMode === 'github' ? 'github' : 'cloudflare';
+    const isDryRun =
+      activePlatform === 'github'
+        ? Boolean(DOM.deployDryRun && DOM.deployDryRun.checked)
+        : Boolean(DOM.deployCfDryRun && DOM.deployCfDryRun.checked);
+
+    try {
+      if (btnEl) {
+        btnEl.disabled = true;
+        btnEl.textContent = '⏳ Deleting...';
+      }
+      setCatalogWorkerStatus(
+        'loading',
+        `⏳ Removing '${slug}' from catalog and live ${activePlatform === 'github' ? 'GitHub Pages' : 'Cloudflare Worker'} without full redeploy...`
+      );
+      appendTerminalLog(`[POST DELETE] Removing '${slug}' directly from ${activePlatform}...`, 'info');
+
+      const res = await api(`/api/posts/${encodeURIComponent(slug)}`, 'DELETE', {
+        platform: activePlatform,
+        dry_run: isDryRun,
+        remove_from_worker: true,
+      });
+
+      const summary = res.dry_run
+        ? `✅ [DRY-RUN] Deleted '${slug}' locally (${res.remaining_posts} posts left, no full rebuild).`
+        : res.removed_from_worker
+          ? `✅ Removed '${slug}' directly from live ${activePlatform === 'github' ? 'GitHub' : 'Cloudflare Worker'} (${res.remaining_posts} posts remaining · ${res.cached_files || 0} unchanged cached on edge).`
+          : `✅ Deleted '${slug}' from local catalog (${res.remaining_posts} posts remaining).`;
+
+      setCatalogWorkerStatus('success', summary, res.live_url || '');
+      showToast(summary, 'success');
+      appendTerminalLog(`[POST DELETE] ${res.message || summary}`, 'success');
+
+      state.allCategories = [];
+      await refreshSystem();
+    } catch (err) {
+      const msg = err && err.message ? err.message : String(err);
+      setCatalogWorkerStatus('error', `❌ Delete failed for '${slug}': ${msg}`);
+      showToast(`Delete failed: ${msg}`, 'error');
+      appendTerminalLog(`[POST DELETE ERROR] ${msg}`, 'error');
+      if (btnEl) {
+        btnEl.disabled = false;
+        btnEl.textContent = '🗑️ Delete';
+      }
+    }
+  }
+
+  // ─── Rich Text Post Editor Helpers ─────────────────────────────────────────
+  function sanitizeSafeEditorUrl(rawUrl) {
+    const trimmed = String(rawUrl || '').trim();
+    if (!trimmed) return '';
+    if (trimmed.startsWith('/') && !trimmed.startsWith('//')) return trimmed;
+    if (/^https?:\/\//i.test(trimmed)) return trimmed;
+    if (/^[a-z0-9.-]+\.[a-z]{2,}(\/|$)/i.test(trimmed)) return `https://${trimmed}`;
+    return '';
+  }
+
+  function updateEditorWordCount() {
+    if (!DOM.editorWordCount) return;
+    let plainText = '';
+    if (state.editorMode === 'source' && DOM.editPostHtmlSource) {
+      const temp = document.createElement('div');
+      temp.innerHTML = DOM.editPostHtmlSource.value || '';
+      plainText = (temp.textContent || '').trim();
+    } else if (DOM.editPostRichEditor) {
+      plainText = (DOM.editPostRichEditor.innerText || DOM.editPostRichEditor.textContent || '').trim();
+    }
+    const words = plainText ? plainText.split(/\s+/).filter(Boolean).length : 0;
+    const chars = plainText.length;
+    DOM.editorWordCount.textContent = `${words} words · ${chars} chars`;
+  }
+
+  function setEditorMode(mode) {
+    if (!DOM.editPostRichEditor || !DOM.editPostHtmlSource) return;
+    closeRteInlineBar();
+
+    if (mode === 'source') {
+      if (state.editorMode !== 'source') {
+        DOM.editPostHtmlSource.value = DOM.editPostRichEditor.innerHTML;
+      }
+      state.editorMode = 'source';
+      DOM.editPostRichEditor.style.display = 'none';
+      DOM.editPostHtmlSource.style.display = 'block';
+      DOM.btnEditorVisual?.classList.remove('active');
+      DOM.btnEditorSource?.classList.add('active');
+      if (DOM.rteToolbar) {
+        DOM.rteToolbar.querySelectorAll('.rte-btn').forEach((b) => { b.disabled = true; });
+      }
+    } else {
+      if (state.editorMode === 'source') {
+        DOM.editPostRichEditor.innerHTML = DOM.editPostHtmlSource.value;
+      }
+      state.editorMode = 'visual';
+      DOM.editPostHtmlSource.style.display = 'none';
+      DOM.editPostRichEditor.style.display = 'block';
+      DOM.btnEditorSource?.classList.remove('active');
+      DOM.btnEditorVisual?.classList.add('active');
+      if (DOM.rteToolbar) {
+        DOM.rteToolbar.querySelectorAll('.rte-btn').forEach((b) => { b.disabled = false; });
+      }
+    }
+    updateEditorWordCount();
+  }
+
+  function saveEditorSelection() {
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0 && DOM.editPostRichEditor?.contains(sel.anchorNode)) {
+      state.rteSavedRange = sel.getRangeAt(0).cloneRange();
+    } else {
+      state.rteSavedRange = null;
+    }
+  }
+
+  function restoreEditorSelection() {
+    if (!DOM.editPostRichEditor) return;
+    DOM.editPostRichEditor.focus();
+    if (state.rteSavedRange) {
+      const sel = window.getSelection();
+      if (sel) {
+        sel.removeAllRanges();
+        sel.addRange(state.rteSavedRange);
+      }
+    }
+  }
+
+  function openRteInlineBar(action) {
+    if (!DOM.rteInlineBar) return;
+    if (state.editorMode !== 'visual') setEditorMode('visual');
+    saveEditorSelection();
+    state.rteInlineAction = action;
+    DOM.rteInlineBar.style.display = 'flex';
+    if (action === 'link') {
+      DOM.rteInlineLabel.textContent = 'Insert Link';
+      DOM.rteInlineUrl.placeholder = 'https://example.com or /about/';
+      DOM.rteInlineText.placeholder = 'Link text (optional if text selected)';
+      const selText = window.getSelection()?.toString() || '';
+      DOM.rteInlineText.value = selText;
+    } else {
+      DOM.rteInlineLabel.textContent = 'Insert Image';
+      DOM.rteInlineUrl.placeholder = '/assets/images/photo.webp or https://...';
+      DOM.rteInlineText.placeholder = 'Image alt text...';
+      DOM.rteInlineText.value = '';
+    }
+    DOM.rteInlineUrl.value = '';
+    DOM.rteInlineUrl.focus();
+  }
+
+  function closeRteInlineBar() {
+    if (!DOM.rteInlineBar) return;
+    DOM.rteInlineBar.style.display = 'none';
+    state.rteInlineAction = null;
+  }
+
+  function applyRteInlineBar() {
+    const safeUrl = sanitizeSafeEditorUrl(DOM.rteInlineUrl?.value || '');
+    if (!safeUrl) {
+      showToast('Please enter a valid http(s):// or /assets/... URL.', 'error');
+      return;
+    }
+    const labelText = (DOM.rteInlineText?.value || '').trim();
+    restoreEditorSelection();
+
+    if (state.rteInlineAction === 'link') {
+      const sel = window.getSelection();
+      if (sel && !sel.isCollapsed) {
+        document.execCommand('createLink', false, safeUrl);
+      } else {
+        const display = escapeHtml(labelText || safeUrl);
+        document.execCommand(
+          'insertHTML',
+          false,
+          `<a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer">${display}</a>`
+        );
+      }
+    } else if (state.rteInlineAction === 'image') {
+      const altAttr = escapeHtml(labelText || 'Article image');
+      document.execCommand(
+        'insertHTML',
+        false,
+        `<figure><img src="${escapeHtml(safeUrl)}" alt="${altAttr}" loading="lazy" /></figure><p></p>`
+      );
+    }
+
+    closeRteInlineBar();
+    updateEditorWordCount();
+  }
+
+  function initRichTextEditor() {
+    if (DOM.rteToolbar) {
+      DOM.rteToolbar.querySelectorAll('.rte-btn[data-cmd]').forEach((btn) => {
+        btn.addEventListener('mousedown', (e) => e.preventDefault());
+        btn.addEventListener('click', () => {
+          if (state.editorMode !== 'visual' || !DOM.editPostRichEditor) return;
+          DOM.editPostRichEditor.focus();
+          const cmd = btn.getAttribute('data-cmd');
+          const val = btn.getAttribute('data-val') || null;
+          if (cmd === 'formatBlock' && val) {
+            document.execCommand('formatBlock', false, `<${val}>`);
+          } else if (cmd) {
+            document.execCommand(cmd, false, val);
+          }
+          updateEditorWordCount();
+        });
+      });
+    }
+
+    if (DOM.btnRteLink) {
+      DOM.btnRteLink.addEventListener('mousedown', (e) => e.preventDefault());
+      DOM.btnRteLink.addEventListener('click', () => openRteInlineBar('link'));
+    }
+
+    if (DOM.btnRteImage) {
+      DOM.btnRteImage.addEventListener('mousedown', (e) => e.preventDefault());
+      DOM.btnRteImage.addEventListener('click', () => openRteInlineBar('image'));
+    }
+
+    if (DOM.btnRteInlineApply) {
+      DOM.btnRteInlineApply.addEventListener('click', applyRteInlineBar);
+    }
+
+    if (DOM.btnRteInlineCancel) {
+      DOM.btnRteInlineCancel.addEventListener('click', closeRteInlineBar);
+    }
+
+    if (DOM.rteInlineUrl) {
+      DOM.rteInlineUrl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          applyRteInlineBar();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          closeRteInlineBar();
+        }
+      });
+    }
+
+    if (DOM.btnEditorVisual) {
+      DOM.btnEditorVisual.addEventListener('click', () => setEditorMode('visual'));
+    }
+
+    if (DOM.btnEditorSource) {
+      DOM.btnEditorSource.addEventListener('click', () => setEditorMode('source'));
+    }
+
+    if (DOM.editPostRichEditor) {
+      DOM.editPostRichEditor.addEventListener('input', updateEditorWordCount);
+    }
+
+    if (DOM.editPostHtmlSource) {
+      DOM.editPostHtmlSource.addEventListener('input', updateEditorWordCount);
+    }
+
+    if (DOM.saveAndPreviewBtn) {
+      DOM.saveAndPreviewBtn.addEventListener('click', (e) => handlePostSave(e, true));
+    }
+
+    if (DOM.saveAndDeployPostBtn) {
+      DOM.saveAndDeployPostBtn.addEventListener('click', () => handlePostSaveAndDeploy());
+    }
+  }
+
+  function setEditPostDeployStatus(type, message, liveUrl = '') {
+    if (!DOM.editPostDeployStatus) return;
+    if (!type) {
+      DOM.editPostDeployStatus.style.display = 'none';
+      DOM.editPostDeployStatus.className = 'rte-deploy-status';
+      DOM.editPostDeployStatus.innerHTML = '';
+      return;
+    }
+    DOM.editPostDeployStatus.style.display = 'flex';
+    DOM.editPostDeployStatus.className = `rte-deploy-status ${type}`;
+    const safeLink =
+      liveUrl && /^https?:\/\//i.test(liveUrl)
+        ? `<a href="${escapeHtml(liveUrl)}" target="_blank" rel="noopener noreferrer" class="rte-deploy-link">Open Live Post ↗</a>`
+        : '';
+    DOM.editPostDeployStatus.innerHTML = `<span>${escapeHtml(message)}</span>${safeLink}`;
+  }
+
+  function closePostEditModal() {
+    closeRteInlineBar();
+    setEditPostDeployStatus(null, '');
+    DOM.postEditModal.classList.remove('active');
+  }
+
+  // Open Edit Modal
   async function openEditModal(slug) {
     try {
-      const post = await api(`/api/posts/${slug}`);
+      const post = await api(`/api/posts/${encodeURIComponent(slug)}`);
       DOM.editPostSlug.value = post.slug;
       DOM.modalPostSlugTitle.textContent = `Edit Post: ${post.slug}`;
+      if (DOM.modalPostCatBadge) {
+        DOM.modalPostCatBadge.textContent = post.category || 'General';
+      }
       DOM.editPostTitle.value = post.title || '';
+      if (DOM.editPostExcerpt) {
+        DOM.editPostExcerpt.value = post.excerpt || '';
+      }
       DOM.editPostCategory.value = post.category || '';
       DOM.editPostParentSlug.value = post.parent_slug || '';
+
+      const initialHtml =
+        (post.content_html && post.content_html.trim()) ||
+        (post.excerpt ? `<p>${escapeHtml(post.excerpt)}</p>` : '<p></p>');
+
+      if (DOM.editPostRichEditor) {
+        DOM.editPostRichEditor.innerHTML = initialHtml;
+      }
+      if (DOM.editPostHtmlSource) {
+        DOM.editPostHtmlSource.value = initialHtml;
+      }
+      setEditorMode('visual');
+      updateEditorWordCount();
+      setEditPostDeployStatus(null, '');
       DOM.postEditModal.classList.add('active');
     } catch (err) {
       showToast(`Failed loading post: ${err.message}`, 'error');
@@ -1210,24 +1799,124 @@
   }
 
   // Save Modal Post
-  async function handlePostSave(e) {
-    e.preventDefault();
+  async function handlePostSave(e, openPreviewAfter = false) {
+    if (e && typeof e.preventDefault === 'function') e.preventDefault();
     const slug = DOM.editPostSlug.value;
     const title = DOM.editPostTitle.value.trim();
+    const excerpt = DOM.editPostExcerpt ? DOM.editPostExcerpt.value.trim() : '';
     const category = DOM.editPostCategory.value.trim();
     const parent_slug = DOM.editPostParentSlug.value.trim();
+    const content_html =
+      state.editorMode === 'source'
+        ? (DOM.editPostHtmlSource ? DOM.editPostHtmlSource.value : '')
+        : (DOM.editPostRichEditor ? DOM.editPostRichEditor.innerHTML : '');
+
+    if (!title) {
+      showToast('Post headline is required.', 'error');
+      return;
+    }
+
     try {
-      await api(`/api/posts/${slug}`, 'PUT', {
+      if (DOM.savePostBtn) DOM.savePostBtn.disabled = true;
+      await api(`/api/posts/${encodeURIComponent(slug)}`, 'PUT', {
         title,
+        excerpt,
         category,
         parent_slug,
+        content_html,
       });
 
-      DOM.postEditModal.classList.remove('active');
+      closePostEditModal();
       showToast(`Saved changes for '${slug}' (marked custom edited)`, 'success');
+      state.allCategories = [];
       await refreshSystem();
+      if (openPreviewAfter) {
+        state.selectedPostSlug = slug;
+        if (DOM.previewPostSelect) DOM.previewPostSelect.value = slug;
+        switchTab('tab-preview');
+      }
     } catch (err) {
       showToast(`Error saving post: ${err.message}`, 'error');
+    } finally {
+      if (DOM.savePostBtn) DOM.savePostBtn.disabled = false;
+    }
+  }
+
+  // Save & Incrementally Deploy Single Edited Post (without re-deploying entire project)
+  async function handlePostSaveAndDeploy() {
+    const slug = DOM.editPostSlug.value;
+    const title = DOM.editPostTitle.value.trim();
+    const excerpt = DOM.editPostExcerpt ? DOM.editPostExcerpt.value.trim() : '';
+    const category = DOM.editPostCategory.value.trim();
+    const parent_slug = DOM.editPostParentSlug.value.trim();
+    const content_html =
+      state.editorMode === 'source'
+        ? (DOM.editPostHtmlSource ? DOM.editPostHtmlSource.value : '')
+        : (DOM.editPostRichEditor ? DOM.editPostRichEditor.innerHTML : '');
+
+    if (!title) {
+      showToast('Post headline is required.', 'error');
+      return;
+    }
+
+    const activePlatform = currentPlatformMode === 'github' ? 'github' : 'cloudflare';
+    const isDryRun =
+      activePlatform === 'github'
+        ? Boolean(DOM.deployDryRun && DOM.deployDryRun.checked)
+        : Boolean(DOM.deployCfDryRun && DOM.deployCfDryRun.checked);
+
+    const origBtnHtml = DOM.saveAndDeployPostBtn ? DOM.saveAndDeployPostBtn.innerHTML : '🚀 Save & Deploy Post';
+
+    try {
+      if (DOM.saveAndDeployPostBtn) {
+        DOM.saveAndDeployPostBtn.disabled = true;
+        DOM.saveAndDeployPostBtn.textContent = '⏳ Deploying Post...';
+      }
+      if (DOM.savePostBtn) DOM.savePostBtn.disabled = true;
+      if (DOM.saveAndPreviewBtn) DOM.saveAndPreviewBtn.disabled = true;
+
+      setEditPostDeployStatus(
+        'loading',
+        `⏳ Saving & deploying only '${slug}' to ${activePlatform === 'github' ? 'GitHub Pages' : 'Cloudflare Workers'}...`
+      );
+      appendTerminalLog(`[POST DEPLOY] Saving & deploying single post '${slug}' (${activePlatform})...`, 'info');
+
+      const res = await api(`/api/posts/${encodeURIComponent(slug)}/deploy`, 'POST', {
+        title,
+        excerpt,
+        category,
+        parent_slug,
+        content_html,
+        platform: activePlatform,
+        dry_run: isDryRun,
+      });
+
+      const uploaded = Number(res.uploaded_files ?? (Array.isArray(res.changed_files) ? res.changed_files.length : 1));
+      const cached = Number(res.cached_files || 0);
+      const summaryText = res.dry_run
+        ? `✅ [DRY-RUN] Rebuilt ${uploaded} file(s) for '${slug}' without full-project rebuild (${res.duration || 0}s).`
+        : cached > 0
+          ? `✅ Post '${slug}' is live! Uploaded ${uploaded} changed file(s) · ${cached} unchanged cached on edge (${res.duration || 0}s).`
+          : `✅ Post '${slug}' is live! Updated ${uploaded} changed file(s) (${res.duration || 0}s).`;
+
+      setEditPostDeployStatus('success', summaryText, res.post_url || res.worker_post_url || '');
+      showToast(summaryText, 'success');
+      appendTerminalLog(`[POST DEPLOY] ${res.message || summaryText}`, 'success');
+
+      state.allCategories = [];
+      await refreshSystem();
+    } catch (err) {
+      const errMsg = err && err.message ? err.message : String(err);
+      setEditPostDeployStatus('error', `❌ Single-post deploy failed: ${errMsg}`);
+      showToast(`Single-post deploy failed: ${errMsg}`, 'error');
+      appendTerminalLog(`[POST DEPLOY ERROR] ${errMsg}`, 'error');
+    } finally {
+      if (DOM.saveAndDeployPostBtn) {
+        DOM.saveAndDeployPostBtn.disabled = false;
+        DOM.saveAndDeployPostBtn.innerHTML = origBtnHtml;
+      }
+      if (DOM.savePostBtn) DOM.savePostBtn.disabled = false;
+      if (DOM.saveAndPreviewBtn) DOM.saveAndPreviewBtn.disabled = false;
     }
   }
 
@@ -1546,6 +2235,9 @@
             DOM.cfStatusFeedback.style.color = '#34D399';
             const subInfo = res.subdomain ? ` (Subdomain: <code>${escapeHtml(res.subdomain)}</code>)` : '';
             DOM.cfStatusFeedback.innerHTML = `✅ <strong>Verified!</strong> Cloudflare Token is active for Account <code>${escapeHtml(res.account_id || accountId || 'Auto')}</code>${subInfo}.`;
+            if (res.account_id && DOM.cfgCfAccountId && !DOM.cfgCfAccountId.value.trim()) {
+              DOM.cfgCfAccountId.value = res.account_id;
+            }
             if (res.subdomain && DOM.cfgCfAccountSubdomain) {
               DOM.cfgCfAccountSubdomain.value = res.subdomain;
             }
@@ -1558,7 +2250,7 @@
           } else {
             DOM.cfStatusFeedback.style.background = 'rgba(239, 68, 68, 0.18)';
             DOM.cfStatusFeedback.style.color = '#FCA5A5';
-            DOM.cfStatusFeedback.innerHTML = `❌ Verification failed: ${escapeHtml(res.error || 'Invalid credentials')}`;
+            DOM.cfStatusFeedback.innerHTML = `❌ Verification failed: ${escapeHtml(res.error || res.message || 'Invalid credentials')}`;
             if (DOM.cfTokenStatusBadge) {
               DOM.cfTokenStatusBadge.textContent = '✕ Invalid Token';
               DOM.cfTokenStatusBadge.style.color = '#EF4444';
@@ -1877,7 +2569,8 @@
         });
 
         showToast('Generation settings updated.', 'success');
-        refreshSystem();
+        await refreshSystem();
+        triggerPreview();
       } catch (err) {
         showToast(`Save error: ${err.message}`, 'error');
       }
@@ -2020,61 +2713,157 @@
       }
     });
 
-    // Scan Sitemap
+    // Scan Sitemap / URL List / WP API
     DOM.scanSitemapBtn.addEventListener('click', async () => {
       try {
         await autoSaveActiveProject();
-        appendTerminalLog('Scanning WordPress sitemap index...', 'info');
+        const sourceType = DOM.ingestSourceType ? DOM.ingestSourceType.value : 'sitemap';
+        const urlOrList =
+          sourceType === 'url_list' && DOM.ingestUrlList
+            ? DOM.ingestUrlList.value.trim()
+            : DOM.ingestSitemapUrl.value.trim();
+        const parsedMax = DOM.ingestMaxPosts ? parseInt(DOM.ingestMaxPosts.value, 10) : 100;
+        const maxPostsVal = Number.isNaN(parsedMax) ? 100 : Math.max(0, parsedMax);
+        DOM.scanSitemapBtn.disabled = true;
+        DOM.scanSitemapBtn.textContent = '⏳ Scanning...';
+        appendTerminalLog(`Scanning ${sourceType} source...`, 'info');
         const res = await api('/api/sitemap/scan', 'POST', {
-          url_or_list: DOM.ingestSitemapUrl.value.trim(),
+          source_type: sourceType,
+          url_or_list: urlOrList,
+          max_posts: maxPostsVal,
         });
-
-        showToast(`Discovered ${res.discovered_count} post URLs.`, 'info');
-        appendTerminalLog(`Scan complete: ${res.discovered_count} URLs located.`, 'success');
+        if (res.success === false) {
+          if (DOM.scanResultBanner) DOM.scanResultBanner.style.display = 'none';
+          showToast(`Scan failed: ${res.error || 'No URLs found'}`, 'error');
+          appendTerminalLog(`[ERROR] Scan failed: ${res.error || 'No URLs found'}`, 'error');
+          return;
+        }
+        const exactCount = Number(res.discovered_count || 0);
+        // Sync Max Posts down to exact sitemap count when sitemap has fewer URLs than Max Posts
+        if (DOM.ingestMaxPosts && exactCount > 0 && maxPostsVal > exactCount) {
+          DOM.ingestMaxPosts.value = String(exactCount);
+          await autoSaveActiveProject();
+        }
+        const effectiveWillIngest =
+          DOM.ingestMaxPosts && parseInt(DOM.ingestMaxPosts.value, 10) > 0
+            ? Math.min(exactCount, parseInt(DOM.ingestMaxPosts.value, 10))
+            : exactCount;
+        if (DOM.scanResultBanner) {
+          DOM.scanResultBanner.style.display = 'block';
+          DOM.scanResultBanner.textContent =
+            exactCount === effectiveWillIngest
+              ? `✅ Exact sitemap scan: ${exactCount} post URL(s) found — ready to ingest all ${exactCount}.`
+              : `✅ Exact sitemap scan: ${exactCount} post URL(s) found (Max Posts cap set to ${effectiveWillIngest}).`;
+        }
+        showToast(`Exact scan: ${exactCount} post URL(s) found in source.`, 'success');
+        appendTerminalLog(`Scan complete: exact ${exactCount} URL(s) located (will ingest ${effectiveWillIngest}).`, 'success');
       } catch (err) {
         showToast(`Scan failed: ${err.message}`, 'error');
+      } finally {
+        DOM.scanSitemapBtn.disabled = false;
+        DOM.scanSitemapBtn.textContent = '🔍 Scan URLs';
       }
     });
+
+    // Stop Active Ingestion
+    if (DOM.stopIngestBtn) {
+      DOM.stopIngestBtn.addEventListener('click', async () => {
+        try {
+          DOM.stopIngestBtn.disabled = true;
+          const res = await api('/api/ingest/stop', 'POST');
+          if (state.ingestPollInterval) {
+            clearInterval(state.ingestPollInterval);
+            state.ingestPollInterval = null;
+          }
+          setIngestRunningUI(false, `⏹️ ${res.message || 'Ingestion stopped by user.'}`);
+          showToast(res.message || 'Ingestion stopped.', 'warning');
+          appendTerminalLog(`[INGEST] ${res.message || 'Stopped by user.'}`, 'warning');
+        } catch (err) {
+          showToast(`Failed to stop ingestion: ${err.message}`, 'error');
+        }
+      });
+    }
+
+    // Clear Active Project Data (2-step inline confirmation — no window.confirm)
+    if (DOM.clearProjectBtn) {
+      DOM.clearProjectBtn.addEventListener('click', () => {
+        if (!DOM.clearProjectConfirmBar) return;
+        const isOpen = DOM.clearProjectConfirmBar.style.display !== 'none';
+        DOM.clearProjectConfirmBar.style.display = isOpen ? 'none' : 'flex';
+      });
+    }
+
+    if (DOM.btnCancelClearProject) {
+      DOM.btnCancelClearProject.addEventListener('click', () => {
+        if (DOM.clearProjectConfirmBar) DOM.clearProjectConfirmBar.style.display = 'none';
+      });
+    }
+
+    if (DOM.btnConfirmClearProject) {
+      DOM.btnConfirmClearProject.addEventListener('click', async () => {
+        try {
+          DOM.btnConfirmClearProject.disabled = true;
+          DOM.btnConfirmClearProject.textContent = '⏳ Clearing...';
+          const res = await api('/api/projects/clear', 'POST', {
+            project_id: state.activeProject,
+          });
+          if (DOM.clearProjectConfirmBar) DOM.clearProjectConfirmBar.style.display = 'none';
+          if (state.ingestPollInterval) {
+            clearInterval(state.ingestPollInterval);
+            state.ingestPollInterval = null;
+          }
+          setIngestRunningUI(false);
+          if (DOM.ingestProgressBarContainer) DOM.ingestProgressBarContainer.style.display = 'none';
+          if (DOM.scanResultBanner) DOM.scanResultBanner.style.display = 'none';
+          if (DOM.diffNewCount) DOM.diffNewCount.textContent = '0';
+          if (DOM.diffUpdatedCount) DOM.diffUpdatedCount.textContent = '0';
+          if (DOM.diffSyncedCount) DOM.diffSyncedCount.textContent = '0';
+          if (DOM.diffSummaryTableBody) DOM.diffSummaryTableBody.innerHTML = '';
+          state.posts = [];
+          state.allCategories = [];
+          renderPostsTable();
+          populateCategoryFilter();
+          showToast(res.message || 'All project data cleared.', 'success');
+          appendTerminalLog(`[PROJECT CLEAR] ${res.message || 'Cleared all project data.'}`, 'success');
+          await refreshSystem();
+          await refreshPosts();
+          await loadProjects();
+        } catch (err) {
+          showToast(`Error clearing project: ${err.message}`, 'error');
+          appendTerminalLog(`[PROJECT CLEAR ERROR] ${err.message}`, 'error');
+        } finally {
+          DOM.btnConfirmClearProject.disabled = false;
+          DOM.btnConfirmClearProject.textContent = 'Yes, Clear All Data';
+        }
+      });
+    }
 
     // Run Ingestion
     DOM.ingestionForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       if (state.isIngesting) {
-        showToast('Ingestion is already running. Please wait...', 'warning');
+        showToast('Ingestion is already running. Click Stop first to cancel.', 'warning');
         return;
       }
 
       const sourceType = DOM.ingestSourceType.value;
-      const urlOrList = sourceType === 'url_list' ? DOM.ingestUrlList.value : DOM.ingestSitemapUrl.value;
+      const urlOrList = (sourceType === 'url_list' ? DOM.ingestUrlList.value : DOM.ingestSitemapUrl.value).trim();
+      const parsedMax = parseInt(DOM.ingestMaxPosts.value, 10);
+      const maxPostsVal = Number.isNaN(parsedMax) ? 100 : Math.max(0, parsedMax);
 
       // Auto-save active project fields so everything entered is persisted
       await autoSaveActiveProject();
       try {
-        state.isIngesting = true;
-        if (DOM.startIngestBtn) {
-          DOM.startIngestBtn.disabled = true;
-          DOM.startIngestBtn.innerHTML = '<span>⏳ Ingesting...</span>';
-        }
-        if (DOM.ingestProgressBarContainer) {
-          DOM.ingestProgressBarContainer.classList.remove('hidden');
-          DOM.ingestProgressBarContainer.style.display = 'block';
-        }
-        if (DOM.ingestProgressBar) {
-          DOM.ingestProgressBar.style.width = '5%';
-        }
-        if (DOM.ingestProgressLabel) {
-          DOM.ingestProgressLabel.textContent = 'Starting background ingestion...';
-        }
-        if (DOM.ingestProgressCount) {
-          DOM.ingestProgressCount.textContent = '0 / ...';
-        }
-        appendTerminalLog(`Running ingestion & manifest diffing (source=${sourceType})...`, 'info');
+        setIngestRunningUI(true, 'Discovering exact URLs from source...');
+        if (DOM.ingestProgressBar) DOM.ingestProgressBar.style.width = '5%';
+        if (DOM.ingestProgressCount) DOM.ingestProgressCount.textContent = '0 / ...';
+        appendTerminalLog(`Running ingestion & manifest diffing (source=${sourceType}, url=${urlOrList || 'seed'})...`, 'info');
         const customDomainVal = DOM.cfgCfCustomDomain ? DOM.cfgCfCustomDomain.value.trim() : '';
         const workerNameVal = DOM.cfgCfProjectName ? DOM.cfgCfProjectName.value.trim() : '';
         const startRes = await api('/api/ingest', 'POST', {
           source_type: sourceType,
           url_or_list: urlOrList,
-          max_posts: parseInt(DOM.ingestMaxPosts.value, 10),
+          max_posts: maxPostsVal,
           download_images: DOM.ingestDownloadImages.checked,
           force_full_resync: DOM.ingestForceResync.checked,
           cf_custom_domain: customDomainVal,
@@ -2083,89 +2872,18 @@
           worker_name: workerNameVal,
         });
 
-        if (state.ingestPollInterval) {
-          clearInterval(state.ingestPollInterval);
+        if (startRes && startRes.success === false) {
+          setIngestRunningUI(false);
+          showToast(startRes.error || 'Could not start ingestion.', 'warning');
+          return;
         }
-        state.ingestPollInterval = setInterval(async () => {
-          try {
-            const jobStatus = await api('/api/ingest/status');
-            if (!jobStatus) return;
-            if (jobStatus.status === 'running') {
-              const processed = jobStatus.processed_count || 0;
-              const total = jobStatus.total_count || 0;
-              const pct = total > 0 ? Math.min(95, Math.round((processed / total) * 100)) : 15;
-              if (DOM.ingestProgressBar) {
-                DOM.ingestProgressBar.style.width = `${pct}%`;
-              }
-              if (DOM.ingestProgressCount) {
-                DOM.ingestProgressCount.textContent = total > 0 ? `${processed} / ${total}` : `${processed} processed`;
-              }
-              if (DOM.ingestProgressLabel) {
-                DOM.ingestProgressLabel.textContent = jobStatus.current_post
-                  ? `Processing: ${jobStatus.current_post}`
-                  : (jobStatus.message || 'Ingesting articles...');
-              }
-            } else if (jobStatus.status === 'success') {
-              clearInterval(state.ingestPollInterval);
-              state.ingestPollInterval = null;
-              state.isIngesting = false;
-              if (DOM.startIngestBtn) {
-                DOM.startIngestBtn.disabled = false;
-                DOM.startIngestBtn.innerHTML = '<span>📥 Ingest &amp; Diff</span>';
-              }
-              if (DOM.ingestProgressBar) {
-                DOM.ingestProgressBar.style.width = '100%';
-              }
-              if (DOM.ingestProgressLabel) {
-                DOM.ingestProgressLabel.textContent = '✅ Ingestion Completed Successfully!';
-              }
-              if (DOM.ingestProgressCount) {
-                DOM.ingestProgressCount.textContent = `${jobStatus.processed_count || 0} / ${jobStatus.total_count || 0}`;
-              }
 
-              const counts = jobStatus.counts || {};
-              if (DOM.diffNewCount) DOM.diffNewCount.textContent = counts.new || 0;
-              if (DOM.diffUpdatedCount) DOM.diffUpdatedCount.textContent = counts.updated || 0;
-              if (DOM.diffSyncedCount) DOM.diffSyncedCount.textContent = counts.synced || 0;
-              if (DOM.diffResultsBox) DOM.diffResultsBox.style.display = 'block';
-              if (DOM.diffSummaryTableBody) {
-                DOM.diffSummaryTableBody.innerHTML = '';
-                (jobStatus.new_posts || []).forEach((p) => addDiffRow(p.slug, p.title, 'NEW', 'badge-new'));
-                (jobStatus.updated_posts || []).forEach((p) => addDiffRow(p.slug, p.title, 'UPDATED', 'badge-updated'));
-                (jobStatus.synced_posts || []).forEach((p) => addDiffRow(p.slug, p.title, 'SYNCED', 'badge-synced'));
-              }
-              showToast(`Ingestion finished: ${counts.total || jobStatus.processed_count || 0} total posts processed.`, 'success');
-              appendTerminalLog(`Ingested: ${counts.new || 0} new, ${counts.updated || 0} updated, ${counts.synced || 0} synced.`, 'success');
-              await refreshSystem();
-              await refreshPosts();
-              await loadProjects();
-            } else if (jobStatus.status === 'error') {
-              clearInterval(state.ingestPollInterval);
-              state.ingestPollInterval = null;
-              state.isIngesting = false;
-              if (DOM.startIngestBtn) {
-                DOM.startIngestBtn.disabled = false;
-                DOM.startIngestBtn.innerHTML = '<span>📥 Ingest &amp; Diff</span>';
-              }
-              if (DOM.ingestProgressLabel) {
-                DOM.ingestProgressLabel.textContent = `❌ Ingestion error: ${jobStatus.error || jobStatus.message || 'Unknown error'}`;
-              }
-              showToast(`Ingestion error: ${jobStatus.error || jobStatus.message}`, 'error');
-              appendTerminalLog(`[INGEST ERROR] ${jobStatus.error || jobStatus.message}`, 'error');
-            }
-          } catch (pollErr) {
-            console.warn('Error polling ingest status:', pollErr);
-          }
-        }, 800);
+        startIngestPolling();
       } catch (err) {
-        state.isIngesting = false;
+        setIngestRunningUI(false);
         if (state.ingestPollInterval) {
           clearInterval(state.ingestPollInterval);
           state.ingestPollInterval = null;
-        }
-        if (DOM.startIngestBtn) {
-          DOM.startIngestBtn.disabled = false;
-          DOM.startIngestBtn.innerHTML = '<span>📥 Ingest &amp; Diff</span>';
         }
         showToast(`Ingestion error: ${err.message}`, 'error');
         appendTerminalLog(`Ingestion failure: ${err.message}`, 'error');
@@ -2207,11 +2925,23 @@
     DOM.postSearchInput.addEventListener('input', () => refreshPosts());
     DOM.postCategoryFilter.addEventListener('change', () => refreshPosts());
     DOM.postStatusFilter.addEventListener('change', () => refreshPosts());
+    if (DOM.fetchWorkerPostsBtn) {
+      DOM.fetchWorkerPostsBtn.addEventListener('click', () => handleFetchWorkerPosts());
+    }
 
     // Modal Events
-    DOM.closeModalBtn.addEventListener('click', () => DOM.postEditModal.classList.remove('active'));
-    DOM.cancelEditBtn.addEventListener('click', () => DOM.postEditModal.classList.remove('active'));
-    DOM.editPostForm.addEventListener('submit', handlePostSave);
+    DOM.closeModalBtn.addEventListener('click', closePostEditModal);
+    DOM.cancelEditBtn.addEventListener('click', closePostEditModal);
+    DOM.postEditModal.addEventListener('click', (e) => {
+      if (e.target === DOM.postEditModal) closePostEditModal();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && DOM.postEditModal.classList.contains('active')) {
+        closePostEditModal();
+      }
+    });
+    DOM.editPostForm.addEventListener('submit', (e) => handlePostSave(e, false));
+    initRichTextEditor();
 
     // Preview Events
     DOM.previewPostSelect.addEventListener('change', () => {

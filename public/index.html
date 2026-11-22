@@ -2,6 +2,15 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <script>
+    window.addEventListener('error', function (e) {
+      var src = (e && (e.filename || (e.error && e.error.stack))) || '';
+      if (typeof src === 'string' && (src.indexOf('chrome-extension://') !== -1 || src.indexOf('moz-extension://') !== -1)) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+      }
+    }, true);
+  </script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>stylesdays pSEO Multi-Cloud Hub — Cloudflare &amp; GitHub</title>
   <meta name="description" content="Multi-cloud programmatic SEO static site generator and management dashboard for Cloudflare Workers and GitHub Pages.">
@@ -616,7 +625,7 @@
 
             <div id="groupSitemapUrl" class="form-group compact-group">
               <label class="form-label" for="ingestSitemapUrl">Sitemap URL</label>
-              <input type="url" id="ingestSitemapUrl" class="form-control" value="https://stylesdays.com/sitemap_index.xml">
+              <input type="url" id="ingestSitemapUrl" class="form-control" value="" placeholder="https://stylesdays.com/post-sitemap8.xml">
             </div>
 
             <div id="groupUrlList" class="form-group compact-group" style="display: none;">
@@ -626,8 +635,8 @@
 
             <div class="dashboard-grid two-cols" style="gap: 0.65rem;">
               <div class="form-group compact-group">
-                <label class="form-label" for="ingestMaxPosts">Max Posts</label>
-                <input type="number" id="ingestMaxPosts" class="form-control" value="100" min="1" max="1000">
+                <label class="form-label" for="ingestMaxPosts">Max Posts <span style="font-weight:400; color:#94A3B8;">(0 = All)</span></label>
+                <input type="number" id="ingestMaxPosts" class="form-control" value="100" min="0" max="5000">
               </div>
               <div class="form-group compact-group" style="padding-top: 1.25rem;">
                 <label class="checkbox-label" for="ingestDownloadImages" style="font-size: 0.75rem;">
@@ -719,10 +728,22 @@
 
             <input type="checkbox" id="ingestForceResync" style="display: none;">
 
-            <div style="display: flex; gap: 0.5rem; margin-top: 0.75rem;">
+            <div style="display: flex; gap: 0.45rem; margin-top: 0.75rem; flex-wrap: wrap;">
               <button type="button" id="scanSitemapBtn" class="btn btn-secondary btn-sm">🔍 Scan URLs</button>
               <button type="submit" id="startIngestBtn" class="btn btn-primary btn-sm">🚀 Ingest &amp; Diff</button>
               <button type="button" id="syncAssetsBtn" class="btn btn-secondary btn-sm">🖼️ Save Assets</button>
+              <button type="button" id="stopIngestBtn" class="btn btn-danger-outline btn-sm" disabled title="Stop active ingestion">⏹️ Stop</button>
+              <button type="button" id="clearProjectBtn" class="btn btn-danger-outline btn-sm" title="Remove all posts, categories, images &amp; build files from this project">🗑️ Clear Project</button>
+            </div>
+
+            <div id="scanResultBanner" class="scan-result-banner" style="display: none;"></div>
+
+            <div id="clearProjectConfirmBar" class="clear-confirm-bar" style="display: none;" role="alert">
+              <span class="clear-confirm-text">⚠️ Remove ALL posts, categories, downloaded images, and build files from this project?</span>
+              <div style="display: flex; gap: 0.4rem;">
+                <button type="button" id="btnConfirmClearProject" class="btn btn-danger btn-xs">Yes, Clear All Data</button>
+                <button type="button" id="btnCancelClearProject" class="btn btn-secondary btn-xs">Cancel</button>
+              </div>
             </div>
 
             <!-- Ingest Real-Time Progress Bar -->
@@ -778,8 +799,11 @@
     <section id="tab-posts" class="tab-pane">
       <div class="card compact-card">
         <div class="card-compact-header" style="flex-wrap: wrap; gap: 0.5rem;">
-          <span class="tag-badge" style="background: rgba(148, 163, 184, 0.15); color: #F8FAFC;">POST CATALOG</span>
-          <div style="display: flex; gap: 0.4rem; margin-left: auto;">
+          <div style="display: flex; align-items: center; gap: 0.55rem; flex-wrap: wrap;">
+            <span class="tag-badge" style="background: rgba(148, 163, 184, 0.15); color: #F8FAFC;">POST CATALOG</span>
+            <button type="button" id="fetchWorkerPostsBtn" class="btn btn-worker-fetch btn-sm" title="Fetch all live posts currently published inside your Cloudflare Worker into this catalog">☁️ Fetch All Worker Posts</button>
+          </div>
+          <div style="display: flex; gap: 0.4rem; margin-left: auto; flex-wrap: wrap;">
             <input type="text" id="postSearchInput" class="form-control" placeholder="Search title or slug..." style="width: 200px; font-size: 0.78rem; padding: 0.35rem 0.65rem;">
             <select id="postCategoryFilter" class="form-control" style="width: 150px; font-size: 0.78rem; padding: 0.35rem 0.65rem;">
               <option value="">All Categories</option>
@@ -791,6 +815,10 @@
             </select>
           </div>
         </div>
+
+        <div id="catalogWorkerStatus" class="catalog-worker-status" style="display: none;" role="status" aria-live="polite"></div>
+
+        <div id="catalogCategoryPills" class="catalog-cat-pills" role="tablist" aria-label="Filter posts by category"></div>
 
         <div class="table-container" style="max-height: 520px; overflow-y: auto; margin-top: 0.5rem;">
           <table class="data-table compact-table" id="postsCatalogTable">
@@ -959,40 +987,106 @@
 
   </main>
 
-  <!-- Modal Post Editor -->
-  <div id="postEditModal" class="modal-overlay">
-    <div class="modal-content">
-      <div class="card-header">
-        <h2 class="card-title" id="modalPostSlugTitle">Edit Post</h2>
+  <!-- Modal Post Rich Text Editor -->
+  <div id="postEditModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modalPostSlugTitle">
+    <div class="modal-content post-editor-modal">
+      <div class="card-header" style="margin-bottom: 1rem; padding-bottom: 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.08);">
+        <div style="display: flex; align-items: center; gap: 0.65rem; flex-wrap: wrap;">
+          <h2 class="card-title" id="modalPostSlugTitle" style="margin: 0;">Edit Post</h2>
+          <span id="modalPostCatBadge" class="badge" style="background: rgba(56, 189, 248, 0.15); color: #7DD3FC;"></span>
+        </div>
         <button type="button" id="closeModalBtn" class="btn btn-secondary btn-sm">✕ Close</button>
       </div>
 
       <form id="editPostForm">
         <input type="hidden" id="editPostSlug">
-        
+
         <div class="form-group compact-group">
           <label class="form-label" for="editPostTitle">Post Headline</label>
           <input type="text" id="editPostTitle" class="form-control" required>
         </div>
 
-
-
-        <div class="dashboard-grid two-cols">
+        <div class="dashboard-grid two-cols" style="margin-top: 0.6rem;">
           <div class="form-group compact-group">
             <label class="form-label" for="editPostCategory">Category Name</label>
-            <input type="text" id="editPostCategory" class="form-control">
+            <input type="text" id="editPostCategory" class="form-control" placeholder="e.g. Bedroom Inspo">
           </div>
           <div class="form-group compact-group">
             <label class="form-label" for="editPostParentSlug">Parent / Category Slug</label>
-            <input type="text" id="editPostParentSlug" class="form-control">
+            <input type="text" id="editPostParentSlug" class="form-control" placeholder="e.g. bedroom-inspo">
           </div>
         </div>
 
+        <div class="form-group compact-group" style="margin-top: 0.6rem;">
+          <label class="form-label" for="editPostExcerpt">Excerpt / Meta Summary</label>
+          <textarea id="editPostExcerpt" class="form-control" rows="2" placeholder="Short summary shown on homepage cards and meta description..."></textarea>
+        </div>
 
+        <div class="form-group compact-group" style="margin-top: 0.75rem;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.35rem; gap: 0.5rem; flex-wrap: wrap;">
+            <label class="form-label" for="editPostRichEditor" style="margin: 0;">Post Content Editor</label>
+            <div style="display: flex; align-items: center; gap: 0.6rem;">
+              <span id="editorWordCount" class="rte-word-count">0 words · 0 chars</span>
+              <div class="rte-mode-toggle" role="group" aria-label="Editor View Mode">
+                <button type="button" id="btnEditorVisual" class="rte-mode-btn active">Visual</button>
+                <button type="button" id="btnEditorSource" class="rte-mode-btn">&lt;/&gt; HTML</button>
+              </div>
+            </div>
+          </div>
 
-        <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem;">
-          <button type="button" id="cancelEditBtn" class="btn btn-secondary btn-sm">Cancel</button>
-          <button type="submit" class="btn btn-primary btn-sm">💾 Save Changes</button>
+          <div class="rte-wrapper">
+            <div class="rte-toolbar" id="rteToolbar" role="toolbar" aria-label="Text formatting toolbar">
+              <div class="rte-group">
+                <button type="button" class="rte-btn" data-cmd="formatBlock" data-val="p" title="Paragraph">P</button>
+                <button type="button" class="rte-btn" data-cmd="formatBlock" data-val="h2" title="Heading 2">H2</button>
+                <button type="button" class="rte-btn" data-cmd="formatBlock" data-val="h3" title="Heading 3">H3</button>
+                <button type="button" class="rte-btn" data-cmd="formatBlock" data-val="blockquote" title="Blockquote">❝</button>
+              </div>
+              <div class="rte-group">
+                <button type="button" class="rte-btn" data-cmd="bold" title="Bold (Ctrl+B)"><strong>B</strong></button>
+                <button type="button" class="rte-btn" data-cmd="italic" title="Italic (Ctrl+I)"><em>I</em></button>
+                <button type="button" class="rte-btn" data-cmd="underline" title="Underline (Ctrl+U)"><u>U</u></button>
+                <button type="button" class="rte-btn" data-cmd="strikeThrough" title="Strikethrough"><s>S</s></button>
+              </div>
+              <div class="rte-group">
+                <button type="button" class="rte-btn" data-cmd="insertUnorderedList" title="Bullet List">• List</button>
+                <button type="button" class="rte-btn" data-cmd="insertOrderedList" title="Numbered List">1. List</button>
+                <button type="button" class="rte-btn" data-cmd="insertHorizontalRule" title="Horizontal Divider">—</button>
+              </div>
+              <div class="rte-group">
+                <button type="button" class="rte-btn" id="btnRteLink" title="Insert Link">🔗 Link</button>
+                <button type="button" class="rte-btn" id="btnRteImage" title="Insert Image">🖼️ Image</button>
+              </div>
+              <div class="rte-group">
+                <button type="button" class="rte-btn" data-cmd="undo" title="Undo">↶</button>
+                <button type="button" class="rte-btn" data-cmd="redo" title="Redo">↷</button>
+                <button type="button" class="rte-btn" data-cmd="removeFormat" title="Clear Formatting">✕ Clear</button>
+              </div>
+            </div>
+
+            <div id="rteInlineBar" class="rte-inline-bar" style="display: none;">
+              <span id="rteInlineLabel" class="rte-inline-label">Insert Link</span>
+              <input type="text" id="rteInlineUrl" class="form-control rte-inline-input" placeholder="https://example.com or /assets/images/photo.webp">
+              <input type="text" id="rteInlineText" class="form-control rte-inline-input" placeholder="Link text or image alt...">
+              <button type="button" id="btnRteInlineApply" class="btn btn-primary btn-xs">Apply</button>
+              <button type="button" id="btnRteInlineCancel" class="btn btn-secondary btn-xs">Cancel</button>
+            </div>
+
+            <div id="editPostRichEditor" class="rte-surface" contenteditable="true" spellcheck="true" role="textbox" aria-multiline="true" aria-label="Post Content Rich Text Editor"></div>
+            <textarea id="editPostHtmlSource" class="rte-source" spellcheck="false" style="display: none;" aria-label="Post Content HTML Source"></textarea>
+          </div>
+        </div>
+
+        <div id="editPostDeployStatus" class="rte-deploy-status" style="display: none;" role="status" aria-live="polite"></div>
+
+        <div class="rte-footer-bar">
+          <span class="rte-footer-hint">Edits are automatically sanitized and protected from overwrite on future re-syncs.</span>
+          <div class="rte-footer-actions">
+            <button type="button" id="cancelEditBtn" class="btn btn-secondary btn-sm">Cancel</button>
+            <button type="button" id="saveAndPreviewBtn" class="btn btn-secondary btn-sm">👁️ Save &amp; Preview</button>
+            <button type="submit" id="savePostBtn" class="btn btn-primary btn-sm">💾 Save Changes</button>
+            <button type="button" id="saveAndDeployPostBtn" class="btn btn-deploy-post btn-sm" title="Save edits and deploy only this post without rebuilding the entire project">🚀 Save &amp; Deploy Post</button>
+          </div>
         </div>
       </form>
     </div>

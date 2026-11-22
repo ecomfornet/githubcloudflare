@@ -15,11 +15,12 @@
 ## 3. REST API Contract (Minimized Active Surface)
 - Projects: `GET /api/projects`, `POST /api/projects`, `POST /api/projects/update`, `POST /api/projects/switch`
 - System & Config: `GET /api/status`, `GET /api/config`, `POST /api/config`, `POST /api/upload-logo`
-- Posts: `GET /api/posts`, `GET /api/posts/:slug`, `PUT /api/posts/:slug`
+- Posts: `GET /api/posts`, `GET /api/posts/:slug`, `PUT /api/posts/:slug`, `POST /api/posts/:slug/deploy` (incremental single-post update), `DELETE /api/posts/:slug` (removes post locally and directly from live Cloudflare Worker / GitHub without full rebuild)
 - Preview: `POST /api/preview`
-- Ingestion: `POST /api/sitemap/scan`, `POST /api/ingest`, `GET /api/ingest/status`
+- Ingestion: `POST /api/sitemap/scan`, `POST /api/ingest`, `POST /api/ingest/stop`, `GET /api/ingest/status`
+- Projects Clear: `POST /api/projects/clear`
 - Build & Assets: `POST /api/build`, `POST /api/assets/sync`, `POST /api/images/optimize`
-- Cloudflare: `POST /api/cloudflare/verify`, `POST /api/cloudflare/deploy`
+- Cloudflare: `POST /api/cloudflare/verify`, `POST /api/cloudflare/deploy`, `POST /api/cloudflare/fetch-posts` (fetches all live articles published on the deployed Cloudflare Worker into the catalog)
 - GitHub & Deploy: `POST /api/github/orgs`, `POST /api/github/check-org`, `POST /api/github/create-repo`, `POST /api/deploy`, `GET /api/deploy/status`, `GET /api/deploy/logs`
 
 ## 4. Dead-Code Minimization Scope

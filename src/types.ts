@@ -148,7 +148,7 @@ export interface DiffSummary {
 }
 
 export interface IngestJob {
-  status: 'idle' | 'running' | 'success' | 'error';
+  status: 'idle' | 'running' | 'success' | 'error' | 'stopped';
   started_at: string;
   completed_at: string;
   current_post: string;

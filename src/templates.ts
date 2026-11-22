@@ -1,5 +1,7 @@
 import type { BrandingConfig, CategoryItem, PostItem } from './types.ts';
-import { resolvePostRoute, slugify } from './types.ts';
+import { resolvePostRoute } from './types.ts';
+import type { SiteIdentity, StaticPageSpec } from './static-pages.ts';
+import { resolveSiteIdentity } from './static-pages.ts';
 
 export interface ThemeTokens {
   id: string;
@@ -24,38 +26,38 @@ export const THEMES: Record<string, ThemeTokens> = {
   'editorial-warm': {
     id: 'editorial-warm',
     name: 'Editorial Warm (Kinfolk Journal)',
-    bg_body: '#FAF8F5',
+    bg_body: '#FFFFFF',
     text_body: '#1C1917',
-    accent: '#E60023',
-    accent_hover: '#C4001D',
-    secondary_accent: '#C2410C',
+    accent: '#C2410C',
+    accent_hover: '#9A3412',
+    secondary_accent: '#E60023',
     card_bg: '#FFFFFF',
     card_border: '#E7E2DA',
-    checkbox_bg: '#F1EDE6',
+    checkbox_bg: '#F8F5F0',
     badge_bg: '#15803D',
-    font_headline: "'Playfair Display', Georgia, serif",
-    font_body: "'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+    font_headline: "'Playfair Display', 'Playfair Fallback', Georgia, serif",
+    font_body: "'Plus Jakarta Sans', 'Jakarta Fallback', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
     header_bg: '#FFFFFF',
-    muted_text: '#78716C',
-    tag_bg: '#F5F5F4',
+    muted_text: '#57534E',
+    tag_bg: '#FAF8F5',
   },
   'nordic-studio': {
     id: 'nordic-studio',
     name: 'The Nordroom (Scandinavian Minimalist)',
-    bg_body: '#FBFBFA',
+    bg_body: '#FFFFFF',
     text_body: '#1C1C1C',
     accent: '#8C6D53',
     accent_hover: '#6E523B',
     secondary_accent: '#8C6D53',
     card_bg: '#FFFFFF',
-    card_border: '#EBEBEA',
-    checkbox_bg: '#F4F3F0',
+    card_border: '#E9E7E2',
+    checkbox_bg: '#F7F5F2',
     badge_bg: '#8C6D53',
-    font_headline: "'Cormorant Garamond', 'Playfair Display', Georgia, serif",
-    font_body: "'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+    font_headline: "'Cormorant Garamond', 'Cormorant Fallback', Georgia, serif",
+    font_body: "'Plus Jakarta Sans', 'Jakarta Fallback', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
     header_bg: '#FFFFFF',
-    muted_text: '#686866',
-    tag_bg: '#F4F3F0',
+    muted_text: '#62615E',
+    tag_bg: '#FBFBFA',
   },
   'pinterest-mag': {
     id: 'pinterest-mag',
@@ -69,11 +71,11 @@ export const THEMES: Record<string, ThemeTokens> = {
     card_border: '#E4E4E7',
     checkbox_bg: '#F4F4F5',
     badge_bg: '#09090B',
-    font_headline: "'Playfair Display', Georgia, serif",
-    font_body: "'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+    font_headline: "'Playfair Display', 'Playfair Fallback', Georgia, serif",
+    font_body: "'Plus Jakarta Sans', 'Jakarta Fallback', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
     header_bg: '#FFFFFF',
-    muted_text: '#71717A',
-    tag_bg: '#F4F4F5',
+    muted_text: '#52525B',
+    tag_bg: '#FAFAFA',
   },
 };
 
@@ -118,7 +120,7 @@ export function generateSvgFallback(title: string, category: string, accent = '#
   <text x="110" y="340" fill="#1C1917" font-family="Georgia, serif" font-size="42" font-weight="700">${safeLine1}</text>
   ${safeLine2 ? `<text x="110" y="398" fill="#1C1917" font-family="Georgia, serif" font-size="42" font-weight="700">${safeLine2}</text>` : ''}
   <line x1="110" y1="450" x2="260" y2="450" stroke="${escapeHtml(accent)}" stroke-width="4"/>
-  <text x="110" y="515" fill="#78716C" font-family="sans-serif" font-size="22">Curated Editorial Guide &amp; Design Specifications</text>
+  <text x="110" y="515" fill="#78716C" font-family="sans-serif" font-size="22">Curated Editorial Guide &amp; Design Inspiration</text>
 </svg>`;
 }
 
@@ -134,117 +136,716 @@ function resolveImageSrc(post: PostItem, accent: string): string {
   return raw.startsWith('/') ? raw : `/${raw}`;
 }
 
-function renderBaseStyles(theme: ThemeTokens): string {
+const SOCIAL_PLATFORMS: Array<{ key: string; label: string; svg: string }> = [
+  {
+    key: 'pinterest',
+    label: 'Pinterest',
+    svg: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12.017 2C6.486 2 2 6.486 2 12.017c0 4.24 2.636 7.865 6.357 9.323-.088-.792-.167-2.008.035-2.872.182-.78 1.175-4.978 1.175-4.978s-.3-.6-.3-1.487c0-1.393.808-2.433 1.813-2.433.855 0 1.268.642 1.268 1.412 0 .86-.548 2.146-.831 3.338-.236.998.5 1.812 1.484 1.812 1.782 0 3.151-1.878 3.151-4.588 0-2.399-1.724-4.076-4.186-4.076-2.851 0-4.525 2.139-4.525 4.35 0 .861.331 1.785.746 2.287.082.099.094.186.07.287-.076.316-.245.998-.278 1.138-.044.183-.146.222-.337.134-1.258-.586-2.044-2.423-2.044-3.9 0-3.175 2.307-6.091 6.652-6.091 3.492 0 6.206 2.488 6.206 5.814 0 3.47-2.187 6.262-5.223 6.262-1.02 0-1.979-.53-2.308-1.156l-.628 2.393c-.227.875-.842 1.972-1.253 2.641.944.292 1.945.45 2.984.45 5.531 0 10.017-4.486 10.017-10.017C22.034 6.486 17.548 2 12.017 2z"/></svg>',
+  },
+  {
+    key: 'instagram',
+    label: 'Instagram',
+    svg: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838a6.162 6.162 0 1 0 0 12.324 6.162 6.162 0 0 0 0-12.324zm0 10.162a4 4 0 1 1 0-8 4 4 0 0 1 0 8zm6.406-11.845a1.44 1.44 0 1 0 0 2.881 1.44 1.44 0 0 0 0-2.881z"/></svg>',
+  },
+  {
+    key: 'facebook',
+    label: 'Facebook',
+    svg: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22.675 0H1.325C.593 0 0 .593 0 1.325v21.351C0 23.407.593 24 1.325 24H12.82v-9.294H9.692v-3.622h3.128V8.413c0-3.1 1.893-4.788 4.659-4.788 1.325 0 2.463.099 2.795.143v3.24l-1.918.001c-1.504 0-1.795.715-1.795 1.763v2.313h3.587l-.467 3.622h-3.12V24h6.116c.73 0 1.323-.593 1.323-1.325V1.325C24 .593 23.407 0 22.675 0z"/></svg>',
+  },
+  {
+    key: 'twitter',
+    label: 'X / Twitter',
+    svg: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>',
+  },
+  {
+    key: 'tiktok',
+    label: 'TikTok',
+    svg: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64 2.93 2.93 0 0 1 .88.13V9.4a6.84 6.84 0 0 0-1-.05A6.33 6.33 0 0 0 5 20.1a6.34 6.34 0 0 0 10.86-4.43v-7a8.16 8.16 0 0 0 4.77 1.52v-3.4a4.85 4.85 0 0 1-1-.1z"/></svg>',
+  },
+  {
+    key: 'youtube',
+    label: 'YouTube',
+    svg: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>',
+  },
+];
+
+function sanitizeSocialHref(raw: string): string {
+  const trimmed = String(raw || '').trim();
+  if (!trimmed) return '';
+  if (/^(javascript|data|vbscript):/i.test(trimmed)) return '';
+  const candidate = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  try {
+    const parsed = new URL(candidate);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '';
+    return parsed.toString();
+  } catch {
+    return '';
+  }
+}
+
+function getActiveSocialLinks(socialLinks?: Record<string, string>): Array<{ key: string; label: string; href: string; svg: string }> {
+  if (!socialLinks || typeof socialLinks !== 'object') return [];
+  const active: Array<{ key: string; label: string; href: string; svg: string }> = [];
+  for (const platform of SOCIAL_PLATFORMS) {
+    const href = sanitizeSocialHref(socialLinks[platform.key] || '');
+    if (!href) continue;
+    active.push({ key: platform.key, label: platform.label, href, svg: platform.svg });
+  }
+  return active;
+}
+
+function renderTopSocialLinksHtml(socialLinks?: Record<string, string>): string {
+  const active = getActiveSocialLinks(socialLinks);
+  if (active.length === 0) return '';
+  const items = active
+    .map(
+      (p) =>
+        `<a class="social-link" href="${escapeHtml(p.href)}" target="_blank" rel="noopener noreferrer" aria-label="${escapeHtml(p.label)}" title="${escapeHtml(p.label)}">${p.svg}</a>`
+    )
+    .join('');
+  return `<div class="social-links" aria-label="Social Media">${items}</div>`;
+}
+
+function renderFooterSocialLinksHtml(socialLinks?: Record<string, string>): string {
+  const active = getActiveSocialLinks(socialLinks);
+  if (active.length === 0) return '';
+  const items = active
+    .map(
+      (p) =>
+        `<a class="footer-social-link" href="${escapeHtml(p.href)}" target="_blank" rel="noopener noreferrer" aria-label="${escapeHtml(p.label)}">${p.svg}<span>${escapeHtml(p.label)}</span></a>`
+    )
+    .join('');
+  return `<div class="footer-socials" aria-label="Follow Us">${items}</div>`;
+}
+
+function getThemeFontStylesheetUrl(theme: ThemeTokens): string {
+  const headlineFamily =
+    theme.id === 'nordic-studio'
+      ? 'Cormorant+Garamond:wght@600;700'
+      : 'Playfair+Display:wght@600;700';
+  return `https://fonts.googleapis.com/css2?family=${headlineFamily}&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap`;
+}
+
+function renderLcpPreloadLink(imgSrc: string): string {
+  const clean = String(imgSrc || '').trim();
+  if (!clean || clean.startsWith('data:')) return '';
+  return `<link rel="preload" as="image" href="${escapeHtml(clean)}" fetchpriority="high" />`;
+}
+
+/**
+ * When an article's featured image is embedded directly inside content_html (no separate hero-frame),
+ * promotes the very first inline <img> to an eager, high-priority LCP image and returns its src for <link rel="preload">.
+ */
+export function promoteFirstBodyImageToLcp(contentHtml: string): { html: string; lcpSrc: string } {
+  let lcpSrc = '';
+  let promoted = false;
+  const html = String(contentHtml || '').replace(/<img\b([^>]*)>/i, (fullMatch, rawAttrs: string) => {
+    if (promoted) return fullMatch;
+    promoted = true;
+    const srcMatch = rawAttrs.match(/\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)')/i);
+    if (srcMatch) lcpSrc = (srcMatch[1] || srcMatch[2] || '').trim();
+    let attrs = rawAttrs
+      .replace(/\s*\bloading\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+      .replace(/\s*\bfetchpriority\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+      .replace(/\s*\bdecoding\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+      .replace(/\s*\/\s*$/, '')
+      .trim();
+    return `<img ${attrs} fetchpriority="high" decoding="async" />`;
+  });
+  return { html, lcpSrc };
+}
+
+function renderBaseStyles(theme: ThemeTokens, lcpPreloadSrc = ''): string {
+  const fontUrl = getThemeFontStylesheetUrl(theme);
+  const preloadTag = renderLcpPreloadLink(lcpPreloadSrc);
   return `
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=Playfair+Display:ital,wght@0,600;0,700;1,600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  ${preloadTag}
+  <link rel="stylesheet" href="${fontUrl}" media="print" onload="this.media='all'" />
+  <noscript><link rel="stylesheet" href="${fontUrl}" /></noscript>
   <style>
+    @font-face {
+      font-family: 'Playfair Fallback';
+      src: local('Georgia'), local('Times New Roman');
+      ascent-override: 96%;
+      descent-override: 24%;
+      line-gap-override: 0%;
+      size-adjust: 105%;
+    }
+    @font-face {
+      font-family: 'Cormorant Fallback';
+      src: local('Georgia'), local('Times New Roman');
+      ascent-override: 94%;
+      descent-override: 24%;
+      line-gap-override: 0%;
+      size-adjust: 100%;
+    }
+    @font-face {
+      font-family: 'Jakarta Fallback';
+      src: local('Arial'), local('Helvetica Neue'), local('Roboto');
+      ascent-override: 96%;
+      descent-override: 25%;
+      line-gap-override: 0%;
+      size-adjust: 101%;
+    }
     *, *::before, *::after { box-sizing: border-box; }
-    body {
+    html, body {
       margin: 0;
+      padding: 0;
       background: ${theme.bg_body};
       color: ${theme.text_body};
       font-family: ${theme.font_body};
-      line-height: 1.7;
+      line-height: 1.65;
       -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
     }
     a { color: inherit; text-decoration: none; }
+    img { max-width: 100%; height: auto; }
+
+    /* ---- Two-Tier Editorial Header (decohome.homeandrecipe.com architecture) ---- */
     .site-header {
       background: ${theme.header_bg};
       border-bottom: 1px solid ${theme.card_border};
-      padding: 1rem 1.5rem;
       position: sticky;
       top: 0;
-      z-index: 20;
+      z-index: 40;
     }
-    .header-inner {
-      max-width: 1120px;
+    .header-top-bar {
+      background: ${theme.tag_bg};
+      border-bottom: 1px solid ${theme.card_border};
+      font-size: 0.78rem;
+      color: ${theme.muted_text};
+    }
+    .header-top-inner {
+      max-width: 1200px;
       margin: 0 auto;
+      padding: 0.42rem 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 0.9rem;
+    }
+    .top-bar-contact {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-weight: 500;
+      color: ${theme.muted_text};
+      transition: color 0.16s ease;
+    }
+    .top-bar-contact:hover { color: ${theme.accent}; }
+    .top-bar-contact svg {
+      width: 14px;
+      height: 14px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 1.8;
+    }
+    .social-links {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      padding-right: 0.9rem;
+      border-right: 1px solid ${theme.card_border};
+    }
+    .social-link {
+      width: 26px;
+      height: 26px;
+      border-radius: 999px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: ${theme.muted_text};
+      background: ${theme.header_bg};
+      border: 1px solid ${theme.card_border};
+      transition: color 0.16s ease, background 0.16s ease, border-color 0.16s ease;
+    }
+    .social-link:hover {
+      color: #FFFFFF;
+      background: ${theme.accent};
+      border-color: ${theme.accent};
+    }
+    .social-link svg {
+      width: 13px;
+      height: 13px;
+      display: block;
+      fill: currentColor;
+    }
+
+    .header-main-inner {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0.95rem 1.5rem;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 1rem;
-      flex-wrap: wrap;
+      gap: 1.5rem;
     }
     .brand-link {
       display: inline-flex;
       align-items: center;
-      gap: 0.75rem;
+      gap: 0.6rem;
       font-family: ${theme.font_headline};
-      font-size: 1.45rem;
+      font-size: 1.55rem;
       font-weight: 700;
-      letter-spacing: -0.01em;
-    }
-    .brand-emblem {
-      width: 34px;
-      height: 34px;
-      border-radius: 6px;
-      background: ${theme.accent};
-      color: #FFFFFF;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 1rem;
-      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: ${theme.text_body};
+      flex-shrink: 0;
     }
     .brand-logo-img {
-      height: 36px;
-      max-width: 160px;
+      height: 38px;
+      max-width: 190px;
       object-fit: contain;
+      display: block;
     }
     .nav-links {
       display: flex;
-      gap: 1.25rem;
-      font-size: 0.85rem;
-      font-weight: 600;
+      align-items: center;
+      justify-content: center;
+      gap: 1.65rem;
+      font-size: 0.88rem;
+      font-weight: 500;
       color: ${theme.muted_text};
+      flex: 1;
       flex-wrap: wrap;
     }
-    .nav-links a:hover { color: ${theme.accent}; }
-    .container {
-      max-width: 1080px;
-      margin: 0 auto;
-      padding: 2.25rem 1.5rem 4rem;
+    .nav-links a {
+      padding: 0.2rem 0;
+      transition: color 0.16s ease;
+      white-space: nowrap;
     }
-    .article-shell {
-      max-width: 860px;
-      margin: 0 auto;
+    .nav-links a:hover { color: ${theme.text_body}; }
+    .header-about-link {
+      font-size: 0.86rem;
+      font-weight: 500;
+      color: ${theme.muted_text};
+      flex-shrink: 0;
+      transition: color 0.16s ease;
     }
-    .eyebrow {
+    .header-about-link:hover { color: ${theme.accent}; }
+
+    .mobile-cat-strip {
+      display: none;
+      border-top: 1px solid ${theme.card_border};
+      padding: 0.55rem 1.25rem;
+      overflow-x: auto;
+      gap: 1.1rem;
+      white-space: nowrap;
+      scrollbar-width: none;
+      background: ${theme.header_bg};
+    }
+    .mobile-cat-strip::-webkit-scrollbar { display: none; }
+    .mobile-cat-strip a {
+      font-size: 0.82rem;
+      font-weight: 500;
+      color: ${theme.muted_text};
+      flex-shrink: 0;
+    }
+    .mobile-cat-strip a:hover { color: ${theme.accent}; }
+
+    @media (max-width: 820px) {
+      .nav-links { display: none; }
+      .mobile-cat-strip { display: flex; }
+    }
+
+    /* ---- Shared Layout Wrappers ---- */
+    .shell {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 1.5rem;
+    }
+    .section-band-soft {
+      background: ${theme.tag_bg};
+      border-top: 1px solid ${theme.card_border};
+      border-bottom: 1px solid ${theme.card_border};
+    }
+    .section-band-plain {
+      background: ${theme.bg_body};
+    }
+    .section-pad {
+      padding: 3.5rem 0;
+    }
+    .section-header-row {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 2rem;
+      flex-wrap: wrap;
+    }
+    .section-title {
+      font-family: ${theme.font_headline};
+      font-size: clamp(1.6rem, 2.8vw, 2.15rem);
+      font-weight: 700;
+      line-height: 1.18;
+      letter-spacing: -0.015em;
+      margin: 0 0 0.35rem;
+      color: ${theme.text_body};
+    }
+    .section-subtitle {
+      font-size: 0.94rem;
+      color: ${theme.muted_text};
+      margin: 0;
+    }
+    .section-meta-link {
+      font-size: 0.86rem;
+      font-weight: 600;
+      color: ${theme.accent};
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      white-space: nowrap;
+    }
+    .section-meta-link:hover { color: ${theme.accent_hover}; }
+
+    /* ---- Home Section 1: Featured Story Hero Split ---- */
+    .hero-split-band {
+      background: ${theme.tag_bg};
+      border-bottom: 1px solid ${theme.card_border};
+      padding: 2.75rem 0 3.25rem;
+    }
+    .hero-split-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.18fr) minmax(0, 1fr);
+      gap: 2.75rem;
+      align-items: center;
+    }
+    .hero-split-media {
+      display: block;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1px solid ${theme.card_border};
+      background: ${theme.checkbox_bg};
+      aspect-ratio: 16 / 10;
+    }
+    .hero-split-media img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+      transition: transform 0.4s ease;
+    }
+    .hero-split-media:hover img { transform: scale(1.025); }
+    .kicker {
       display: inline-block;
       font-size: 0.72rem;
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.12em;
       color: ${theme.accent};
-      background: ${theme.tag_bg};
-      padding: 0.25rem 0.65rem;
-      border-radius: 4px;
-      margin-bottom: 0.9rem;
+      margin-bottom: 0.7rem;
     }
+    .hero-split-title {
+      font-family: ${theme.font_headline};
+      font-size: clamp(1.9rem, 3.6vw, 2.85rem);
+      font-weight: 700;
+      line-height: 1.14;
+      letter-spacing: -0.02em;
+      margin: 0 0 1rem;
+      color: ${theme.text_body};
+    }
+    .hero-split-title a:hover { color: ${theme.accent}; }
+    .hero-split-excerpt {
+      font-size: 1.02rem;
+      line-height: 1.65;
+      color: ${theme.muted_text};
+      margin: 0 0 1.25rem;
+    }
+    .hero-split-meta {
+      font-size: 0.82rem;
+      color: ${theme.muted_text};
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+    .hero-read-cta {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      margin-top: 1.25rem;
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: ${theme.accent};
+    }
+    .hero-read-cta:hover { color: ${theme.accent_hover}; }
+
+    @media (max-width: 860px) {
+      .hero-split-grid {
+        grid-template-columns: 1fr;
+        gap: 1.65rem;
+      }
+    }
+
+    /* ---- Home Section 2: All Categories Grid ---- */
+    .categories-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1.35rem;
+    }
+    @media (max-width: 900px) {
+      .categories-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 600px) {
+      .categories-grid { grid-template-columns: 1fr; }
+    }
+    .category-card {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      min-height: 158px;
+      padding: 1.5rem 1.5rem 1.2rem;
+      background: ${theme.card_bg};
+      border: 1px solid ${theme.card_border};
+      border-top: 3px solid ${theme.accent};
+      border-radius: 10px;
+      transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+    }
+    .category-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 12px 26px rgba(15, 23, 42, 0.06);
+      border-color: ${theme.accent};
+    }
+    .category-card-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+    .category-card-title {
+      font-family: ${theme.font_headline};
+      font-size: 1.32rem;
+      font-weight: 700;
+      line-height: 1.25;
+      margin: 0;
+      color: ${theme.text_body};
+    }
+    .category-arrow-circle {
+      width: 34px;
+      height: 34px;
+      border-radius: 999px;
+      background: ${theme.checkbox_bg};
+      color: ${theme.accent};
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      font-size: 0.95rem;
+      transition: background 0.18s ease, color 0.18s ease;
+    }
+    .category-card:hover .category-arrow-circle {
+      background: ${theme.accent};
+      color: #FFFFFF;
+    }
+    .category-card-foot {
+      margin-top: 1.5rem;
+      padding-top: 0.85rem;
+      border-top: 1px solid ${theme.card_border};
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: ${theme.muted_text};
+    }
+    .category-card:hover .category-card-foot { color: ${theme.accent}; }
+
+    /* ---- Home Section 3 & Related: 3-Column Editorial Article Grid ---- */
+    .posts-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1.65rem;
+    }
+    @media (max-width: 960px) {
+      .posts-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 620px) {
+      .posts-grid { grid-template-columns: 1fr; }
+    }
+    .post-card {
+      background: ${theme.card_bg};
+      border: 1px solid ${theme.card_border};
+      border-radius: 10px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .post-card:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 14px 28px rgba(15, 23, 42, 0.07);
+    }
+    .post-card-link {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+    .post-card-media {
+      aspect-ratio: 3 / 2;
+      overflow: hidden;
+      background: ${theme.checkbox_bg};
+    }
+    .post-card-media img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+      transition: transform 0.35s ease;
+    }
+    .post-card:hover .post-card-media img { transform: scale(1.03); }
+    .post-card-body {
+      padding: 1.2rem 1.3rem 1.35rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.45rem;
+      flex: 1;
+    }
+    .post-card-kicker {
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.11em;
+      color: ${theme.accent};
+    }
+    .post-card-title {
+      font-family: ${theme.font_headline};
+      font-size: 1.22rem;
+      font-weight: 700;
+      line-height: 1.3;
+      margin: 0;
+      color: ${theme.text_body};
+    }
+    .post-card-excerpt {
+      font-size: 0.88rem;
+      line-height: 1.55;
+      color: ${theme.muted_text};
+      margin: 0.15rem 0 0;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .post-card-read-strip {
+      margin-top: auto;
+      padding: 0.85rem 1.3rem;
+      border-top: 1px solid ${theme.card_border};
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: ${theme.accent};
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    /* ---- Home Section 4: Editorial Newsletter Band ---- */
+    .newsletter-band {
+      background: ${theme.bg_body};
+      padding: 3.75rem 0;
+    }
+    .newsletter-box {
+      max-width: 640px;
+      margin: 0 auto;
+      text-align: center;
+    }
+    .newsletter-title {
+      font-family: ${theme.font_headline};
+      font-size: clamp(1.55rem, 2.8vw, 2.05rem);
+      font-weight: 700;
+      line-height: 1.2;
+      margin: 0 0 0.6rem;
+    }
+    .newsletter-copy {
+      font-size: 0.96rem;
+      color: ${theme.muted_text};
+      margin: 0 0 1.5rem;
+    }
+    .newsletter-form {
+      display: flex;
+      gap: 0.65rem;
+      max-width: 460px;
+      margin: 0 auto;
+    }
+    @media (max-width: 520px) {
+      .newsletter-form { flex-direction: column; }
+    }
+    .newsletter-form input[type="email"] {
+      flex: 1;
+      padding: 0.78rem 1rem;
+      border-radius: 8px;
+      border: 1px solid ${theme.card_border};
+      background: ${theme.tag_bg};
+      color: ${theme.text_body};
+      font-size: 0.92rem;
+      font-family: inherit;
+      outline: none;
+    }
+    .newsletter-form input[type="email"]:focus {
+      border-color: ${theme.accent};
+      background: #FFFFFF;
+    }
+    .btn-solid {
+      padding: 0.78rem 1.4rem;
+      border-radius: 8px;
+      border: none;
+      background: ${theme.accent};
+      color: #FFFFFF;
+      font-size: 0.88rem;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+      transition: background 0.16s ease;
+      white-space: nowrap;
+    }
+    .btn-solid:hover { background: ${theme.accent_hover}; }
+    .form-feedback {
+      margin: 0.75rem 0 0;
+      font-size: 0.86rem;
+      font-weight: 500;
+      color: ${theme.accent};
+      min-height: 1.2em;
+    }
+
+    /* ---- Article & Static Page Typography ---- */
+    .article-container {
+      max-width: 780px;
+      margin: 0 auto;
+      padding: 2.25rem 1.5rem 3.5rem;
+    }
+    .related-container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 1.5rem 4rem;
+    }
+    .breadcrumbs {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.45rem;
+      font-size: 0.8rem;
+      color: ${theme.muted_text};
+      margin-bottom: 1.15rem;
+    }
+    .breadcrumbs a:hover { color: ${theme.accent}; }
+    .breadcrumbs-sep { opacity: 0.55; }
     h1 {
       font-family: ${theme.font_headline};
-      font-size: clamp(1.9rem, 4vw, 3rem);
+      font-size: clamp(1.95rem, 4vw, 2.9rem);
       line-height: 1.15;
+      letter-spacing: -0.02em;
       margin: 0 0 1rem;
       font-weight: 700;
-    }
-    h2 {
-      font-family: ${theme.font_headline};
-      font-size: 1.55rem;
-      margin: 2.2rem 0 0.9rem;
     }
     .excerpt {
       font-size: 1.08rem;
       color: ${theme.muted_text};
-      margin: 0 0 1.4rem;
+      margin: 0 0 1.35rem;
+      line-height: 1.65;
     }
     .meta-row {
       display: flex;
       align-items: center;
       gap: 1rem;
-      font-size: 0.82rem;
+      font-size: 0.83rem;
       color: ${theme.muted_text};
       padding-bottom: 1.25rem;
       border-bottom: 1px solid ${theme.card_border};
@@ -256,47 +857,108 @@ function renderBaseStyles(theme: ThemeTokens): string {
       border-radius: 12px;
       overflow: hidden;
       border: 1px solid ${theme.card_border};
-      background: ${theme.card_bg};
+      background: ${theme.checkbox_bg};
       margin-bottom: 2rem;
     }
     .hero-frame img {
       display: block;
       width: 100%;
-      aspect-ratio: 16 / 10;
+      height: auto;
+      max-height: 620px;
       object-fit: cover;
     }
-    .pin-badge {
+    .pin-save-btn {
       position: absolute;
       top: 14px;
       right: 14px;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.48rem 0.9rem;
+      border-radius: 999px;
       background: #E60023;
       color: #FFFFFF;
-      font-size: 0.78rem;
+      font-size: 0.8rem;
       font-weight: 700;
-      padding: 0.45rem 0.85rem;
-      border-radius: 999px;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.22);
+      transition: transform 0.16s ease, background 0.16s ease;
+    }
+    .pin-save-btn:hover {
+      background: #C4001D;
+      transform: translateY(-1px);
+    }
+    .pin-save-btn svg {
+      width: 14px;
+      height: 14px;
+      fill: currentColor;
+    }
+
+    .article-body {
+      font-size: 1.04rem;
+      line-height: 1.82;
+      color: ${theme.text_body};
+      word-wrap: break-word;
+    }
+    .article-body h2, .article-body h3, .article-body h4 {
+      font-family: ${theme.font_headline};
+      line-height: 1.25;
+      margin: 2.1rem 0 0.85rem;
+      color: ${theme.text_body};
+    }
+    .article-body h2 { font-size: 1.55rem; }
+    .article-body h3 { font-size: 1.28rem; }
+    .article-body p { margin: 0 0 1.25rem; }
+    .article-body img {
+      display: block;
+      max-width: 100%;
+      height: auto;
+      border-radius: 10px;
+      margin: 1.6rem auto;
+      border: 1px solid ${theme.card_border};
+    }
+    .article-body figure { margin: 1.75rem 0; }
+    .article-body figcaption {
+      text-align: center;
+      font-size: 0.84rem;
+      color: ${theme.muted_text};
+      margin-top: 0.5rem;
+    }
+    .article-body ul, .article-body ol {
+      padding-left: 1.4rem;
+      margin: 0 0 1.3rem;
+    }
+    .article-body li { margin-bottom: 0.5rem; }
+    .article-body blockquote {
+      margin: 1.5rem 0;
+      padding: 0.95rem 1.25rem;
+      border-left: 3px solid ${theme.accent};
+      background: ${theme.tag_bg};
+      border-radius: 0 8px 8px 0;
+    }
+    .article-body a {
+      color: ${theme.accent};
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+    .article-body table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1.5rem 0;
+      font-size: 0.92rem;
+    }
+    .article-body th, .article-body td {
+      border: 1px solid ${theme.card_border};
+      padding: 0.65rem 0.85rem;
+      text-align: left;
     }
     .card {
       background: ${theme.card_bg};
       border: 1px solid ${theme.card_border};
       border-radius: 10px;
       padding: 1.35rem 1.5rem;
-      margin-bottom: 1.5rem;
+      margin: 1.75rem 0;
     }
-    .toc-box {
-      background: ${theme.tag_bg};
-      border-left: 3px solid ${theme.accent};
-    }
-    .toc-list {
-      margin: 0.5rem 0 0;
-      padding-left: 1.15rem;
-      font-size: 0.9rem;
-    }
-    .takeaway-list {
-      margin: 0.6rem 0 0;
-      padding-left: 1.2rem;
-    }
+    .takeaway-list { margin: 0.6rem 0 0; padding-left: 1.2rem; }
     .takeaway-list li { margin-bottom: 0.55rem; }
     .checklist-item {
       display: flex;
@@ -310,140 +972,246 @@ function renderBaseStyles(theme: ThemeTokens): string {
       cursor: pointer;
     }
     .checklist-item input { margin-top: 0.25rem; accent-color: ${theme.accent}; }
-    .spec-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-      gap: 0.85rem;
-      margin: 1.5rem 0;
-    }
-    .spec-tile {
-      background: ${theme.card_bg};
+
+    /* ---- Contact & Trust Page Form Styles ---- */
+    .trust-contact-form {
+      margin-top: 1.75rem;
+      padding: 1.75rem;
+      border-radius: 12px;
       border: 1px solid ${theme.card_border};
-      border-radius: 8px;
-      padding: 0.9rem 1rem;
-    }
-    .spec-label {
-      font-size: 0.7rem;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: ${theme.muted_text};
-      font-weight: 700;
-    }
-    .spec-value {
-      font-size: 0.96rem;
-      font-weight: 700;
-      margin-top: 0.25rem;
-    }
-    .eeat-box {
-      display: flex;
-      align-items: center;
-      gap: 1rem;
       background: ${theme.tag_bg};
-      border: 1px solid ${theme.card_border};
-      border-radius: 10px;
-      padding: 1.2rem;
-      margin-top: 2rem;
     }
-    .author-avatar {
-      width: 52px;
-      height: 52px;
-      border-radius: 50%;
-      background: ${theme.accent};
-      color: #FFFFFF;
+    .trust-contact-form .form-row {
+      margin-bottom: 1.1rem;
+    }
+    .trust-contact-form label {
+      display: block;
+      font-size: 0.84rem;
+      font-weight: 600;
+      margin-bottom: 0.35rem;
+      color: ${theme.text_body};
+    }
+    .trust-contact-form input,
+    .trust-contact-form textarea {
+      width: 100%;
+      padding: 0.72rem 0.9rem;
+      border-radius: 8px;
+      border: 1px solid ${theme.card_border};
+      background: #FFFFFF;
+      color: ${theme.text_body};
+      font-size: 0.94rem;
+      font-family: inherit;
+    }
+    .trust-contact-form input:focus,
+    .trust-contact-form textarea:focus {
+      outline: none;
+      border-color: ${theme.accent};
+    }
+    .sitemap-list {
+      columns: 2;
+      column-gap: 2rem;
+    }
+    @media (max-width: 640px) {
+      .sitemap-list { columns: 1; }
+    }
+
+    /* ---- Category Archive Header ---- */
+    .archive-header {
+      background: ${theme.tag_bg};
+      border-bottom: 1px solid ${theme.card_border};
+      padding: 2.75rem 0 2.4rem;
+    }
+
+    /* ---- 3-Column Editorial Footer (decohome.homeandrecipe.com architecture) ---- */
+    .site-footer {
+      background: ${theme.tag_bg};
+      border-top: 1px solid ${theme.card_border};
+      color: ${theme.muted_text};
+      padding: 3.5rem 0 2rem;
+    }
+    .footer-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr);
+      gap: 2.75rem;
+      padding-bottom: 2.5rem;
+      border-bottom: 1px solid ${theme.card_border};
+    }
+    @media (max-width: 820px) {
+      .footer-grid {
+        grid-template-columns: 1fr;
+        gap: 2rem;
+      }
+    }
+    .footer-brand-name {
+      display: inline-block;
+      font-family: ${theme.font_headline};
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: ${theme.text_body};
+      margin-bottom: 0.75rem;
+    }
+    .footer-brand-desc {
+      font-size: 0.9rem;
+      line-height: 1.65;
+      max-width: 400px;
+      margin: 0 0 1.25rem;
+    }
+    .footer-socials {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem;
+    }
+    .footer-social-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.4rem 0.75rem;
+      border-radius: 999px;
+      border: 1px solid ${theme.card_border};
+      background: ${theme.header_bg};
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: ${theme.text_body};
+      transition: border-color 0.16s ease, color 0.16s ease;
+    }
+    .footer-social-link:hover {
+      border-color: ${theme.accent};
+      color: ${theme.accent};
+    }
+    .footer-social-link svg {
+      width: 13px;
+      height: 13px;
+      fill: currentColor;
+    }
+    .footer-col-title {
+      font-size: 0.74rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: ${theme.text_body};
+      margin: 0 0 1rem;
+    }
+    .footer-link-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.52rem;
+      font-size: 0.88rem;
+    }
+    .footer-link-list a:hover { color: ${theme.accent}; }
+    .footer-bottom {
+      padding-top: 1.4rem;
       display: flex;
       align-items: center;
-      justify-content: center;
-      font-family: ${theme.font_headline};
-      font-size: 1.35rem;
-      font-weight: 700;
-      flex-shrink: 0;
+      justify-content: space-between;
+      gap: 1rem;
+      flex-wrap: wrap;
+      font-size: 0.82rem;
     }
-    .hub-hero {
-      text-align: center;
-      max-width: 720px;
-      margin: 0 auto 2.5rem;
-    }
-    .posts-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
-      gap: 1.5rem;
-    }
-    .post-card {
-      background: ${theme.card_bg};
-      border: 1px solid ${theme.card_border};
-      border-radius: 10px;
-      overflow: hidden;
-      display: flex;
-      flex-direction: column;
-      transition: transform 0.2s ease, box-shadow 0.2s ease;
-    }
-    .post-card:hover {
-      transform: translateY(-3px);
-      box-shadow: 0 12px 24px rgba(0, 0, 0, 0.06);
-    }
-    .post-card img {
-      width: 100%;
-      aspect-ratio: 16 / 10;
-      object-fit: cover;
-      display: block;
-    }
-    .post-card-body {
-      padding: 1.15rem 1.25rem 1.35rem;
-      display: flex;
-      flex-direction: column;
-      gap: 0.5rem;
-      flex: 1;
-    }
-    .post-card-title {
-      font-family: ${theme.font_headline};
-      font-size: 1.2rem;
-      font-weight: 700;
-      line-height: 1.3;
-      margin: 0;
-    }
-    .post-card-excerpt {
-      font-size: 0.88rem;
-      color: ${theme.muted_text};
-      margin: 0;
-    }
-    .site-footer {
-      border-top: 1px solid ${theme.card_border};
-      padding: 2rem 1.5rem;
-      text-align: center;
-      font-size: 0.84rem;
-      color: ${theme.muted_text};
-      background: ${theme.header_bg};
-    }
+    .footer-bottom a:hover { color: ${theme.accent}; }
   </style>`;
 }
+
+const MAIL_ICON_SVG =
+  '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>';
+
+const PINTEREST_ICON_SVG =
+  '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12.017 2C6.486 2 2 6.486 2 12.017c0 4.24 2.636 7.865 6.357 9.323-.088-.792-.167-2.008.035-2.872.182-.78 1.175-4.978 1.175-4.978s-.3-.6-.3-1.487c0-1.393.808-2.433 1.813-2.433.855 0 1.268.642 1.268 1.412 0 .86-.548 2.146-.831 3.338-.236.998.5 1.812 1.484 1.812 1.782 0 3.151-1.878 3.151-4.588 0-2.399-1.724-4.076-4.186-4.076-2.851 0-4.525 2.139-4.525 4.35 0 .861.331 1.785.746 2.287.082.099.094.186.07.287-.076.316-.245.998-.278 1.138-.044.183-.146.222-.337.134-1.258-.586-2.044-2.423-2.044-3.9 0-3.175 2.307-6.091 6.652-6.091 3.492 0 6.206 2.488 6.206 5.814 0 3.47-2.187 6.262-5.223 6.262-1.02 0-1.979-.53-2.308-1.156l-.628 2.393c-.227.875-.842 1.972-1.253 2.641.944.292 1.945.45 2.984.45 5.531 0 10.017-4.486 10.017-10.017C22.034 6.486 17.548 2 12.017 2z"/></svg>';
 
 function renderHeader(
   branding: BrandingConfig,
   categories: CategoryItem[],
-  theme: ThemeTokens
+  identity: SiteIdentity
 ): string {
-  const brandName = escapeHtml(branding.brand_name || 'Atelier Maison');
-  const initials = brandName.charAt(0).toUpperCase() || 'A';
-  const logoHtml = branding.logo_path
-    ? `<img class="brand-logo-img" src="${escapeHtml(branding.logo_path)}" alt="${brandName}" />`
-    : `<span class="brand-emblem">${initials}</span>`;
+  const safeSiteName = escapeHtml(identity.siteName);
+  const hasCustomLogo = Boolean(branding.logo_path && branding.logo_path.trim());
+  const brandHtml = hasCustomLogo
+    ? `<img class="brand-logo-img" src="${escapeHtml(branding.logo_path.trim())}" alt="${safeSiteName}" width="190" height="38" decoding="async" />`
+    : `<span class="brand-wordmark">${safeSiteName}</span>`;
 
-  const navCats = categories.slice(0, 5);
+  const navCats = categories.slice(0, 6);
   const navHtml = navCats.length
-    ? navCats
-        .map(
-          (c) =>
-            `<a href="/${escapeHtml(c.slug)}/">${escapeHtml(c.name)}</a>`
-        )
-        .join('')
-    : `<a href="/">Home</a><a href="/living-room/">Living Room</a><a href="/bedroom/">Bedroom</a><a href="/architecture/">Architecture</a>`;
+    ? navCats.map((c) => `<a href="/${escapeHtml(c.slug)}/">${escapeHtml(c.name)}</a>`).join('')
+    : `<a href="/">Home</a>`;
+
+  const mobileStripHtml = navCats.length
+    ? `<nav class="mobile-cat-strip" aria-label="Categories">${navHtml}</nav>`
+    : '';
+
+  const socialHtml = renderTopSocialLinksHtml(branding.social_links);
 
   return `<header class="site-header">
-    <div class="header-inner">
-      <a class="brand-link" href="/">${logoHtml}<span>${brandName}</span></a>
-      <nav class="nav-links" aria-label="Primary Navigation">${navHtml}</nav>
+    <div class="header-top-bar">
+      <div class="header-top-inner">
+        ${socialHtml}
+        <a class="top-bar-contact" href="/contact/">${MAIL_ICON_SVG}<span>Contact</span></a>
+      </div>
     </div>
+    <div class="header-main-inner">
+      <a class="brand-link" href="/" aria-label="${safeSiteName}">${brandHtml}</a>
+      <nav class="nav-links" aria-label="Primary Navigation">${navHtml}</nav>
+      <a class="header-about-link" href="/about/">About</a>
+    </div>
+    ${mobileStripHtml}
   </header>`;
+}
+
+function renderFooter(
+  branding: BrandingConfig,
+  categories: CategoryItem[],
+  identity: SiteIdentity
+): string {
+  const safeSiteName = escapeHtml(identity.siteName);
+  const hasCustomLogo = Boolean(branding.logo_path && branding.logo_path.trim());
+  const footerBrandHtml = hasCustomLogo
+    ? `<a href="/" aria-label="${safeSiteName}" style="display:inline-block;margin-bottom:0.8rem;"><img class="brand-logo-img" src="${escapeHtml(branding.logo_path.trim())}" alt="${safeSiteName}" width="190" height="38" loading="lazy" decoding="async" /></a>`
+    : `<a class="footer-brand-name" href="/">${safeSiteName}</a>`;
+
+  const exploreItems = categories.length
+    ? categories
+        .slice(0, 8)
+        .map((c) => `<li><a href="/${escapeHtml(c.slug)}/">${escapeHtml(c.name)}</a></li>`)
+        .join('')
+    : `<li><a href="/">Home</a></li><li><a href="/sitemap/">All Articles</a></li>`;
+
+  const footerSocials = renderFooterSocialLinksHtml(branding.social_links);
+
+  return `<footer class="site-footer">
+    <div class="shell">
+      <div class="footer-grid">
+        <div>
+          ${footerBrandHtml}
+          <p class="footer-brand-desc">${escapeHtml(identity.tagline)}</p>
+          ${footerSocials}
+        </div>
+        <div>
+          <h3 class="footer-col-title">Explore</h3>
+          <ul class="footer-link-list">${exploreItems}</ul>
+        </div>
+        <div>
+          <h3 class="footer-col-title">Company</h3>
+          <ul class="footer-link-list">
+            <li><a href="/about/">About Us</a></li>
+            <li><a href="/contact/">Contact</a></li>
+            <li><a href="/editorial-policy/">Editorial Policy</a></li>
+            <li><a href="/fact-checking-policy/">Fact-Checking Policy</a></li>
+            <li><a href="/privacy-policy/">Privacy Policy</a></li>
+            <li><a href="/cookie-policy/">Cookie Policy</a></li>
+            <li><a href="/terms/">Terms &amp; Conditions</a></li>
+            <li><a href="/disclaimer/">Disclaimer</a></li>
+            <li><a href="/copyright/">Copyright &amp; Images</a></li>
+            <li><a href="/sitemap/">Sitemap</a></li>
+          </ul>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <span>&copy; ${new Date().getFullYear()} ${safeSiteName}. All rights reserved.</span>
+        <a href="mailto:${escapeHtml(identity.contactEmail)}">${escapeHtml(identity.contactEmail)}</a>
+      </div>
+    </div>
+  </footer>`;
 }
 
 export function renderPostHtml(params: {
@@ -455,17 +1223,50 @@ export function renderPostHtml(params: {
   routingMode: string;
   baseUrl?: string;
   sourceDomain?: string;
+  customDomain?: string;
+  projectName?: string;
 }): string {
-  const { post, allPosts, themeKey, branding, categories, routingMode, baseUrl = '', sourceDomain = 'stylesdays.com' } = params;
+  const {
+    post,
+    allPosts,
+    themeKey,
+    branding,
+    categories,
+    routingMode,
+    baseUrl = '',
+    customDomain = '',
+    projectName = '',
+  } = params;
   const theme = getThemeTokens(themeKey);
+  const identity = resolveSiteIdentity({ customDomain, baseUrl, branding, projectName });
   const route = resolvePostRoute(post, routingMode);
-  const canonical = baseUrl ? `${baseUrl.replace(/\/+$/, '')}${route.web_path}` : route.web_path;
-  const imgSrc = resolveImageSrc(post, theme.accent);
-  const fallbackUri = buildInlineSvgDataUri(post.title, post.category, theme.accent);
+  const canonical = `${identity.siteUrl.replace(/\/+$/, '')}${route.web_path}`;
+  const hasRealImage = Boolean((post.local_image_path || post.image_url || '').trim());
+  const imgSrc = hasRealImage ? resolveImageSrc(post, theme.accent) : '';
 
+  const absImgUrl =
+    imgSrc && imgSrc.startsWith('/') ? `${identity.siteUrl.replace(/\/+$/, '')}${imgSrc}` : imgSrc;
+  const pinShareHref = `https://www.pinterest.com/pin/create/button/?url=${encodeURIComponent(canonical)}&media=${encodeURIComponent(absImgUrl || '')}&description=${encodeURIComponent(post.title)}`;
+
+  // Avoid duplicating the featured image if it is already embedded inside the scraped article body
+  const heroAlreadyInBody = Boolean(
+    imgSrc &&
+      post.content_html &&
+      (post.content_html.includes(imgSrc) || (post.image_url && post.content_html.includes(post.image_url)))
+  );
+
+  const renderSeparateHero = hasRealImage && !heroAlreadyInBody;
+  const heroHtml = renderSeparateHero
+    ? `<div class="hero-frame">
+        <img src="${escapeHtml(imgSrc)}" alt="${escapeHtml(post.title)}" width="${post.image_width || 1200}" height="${post.image_height || 750}" fetchpriority="high" decoding="async" />
+        <a class="pin-save-btn" href="${escapeHtml(pinShareHref)}" target="_blank" rel="noopener noreferrer" aria-label="Save to Pinterest">${PINTEREST_ICON_SVG}<span>Save</span></a>
+      </div>`
+    : '';
+
+  // Render strictly user-edited takeaways/checklists ONLY when explicitly present (never fabricate)
   const takeawaysHtml = post.takeaways.length
     ? `<section id="takeaways" class="card">
-        <h2 style="margin-top:0;">Key Architectural Takeaways</h2>
+        <h2 style="margin-top:0;">Key Takeaways</h2>
         <ul class="takeaway-list">
           ${post.takeaways.map((t) => `<li>${escapeHtml(t)}</li>`).join('')}
         </ul>
@@ -474,7 +1275,7 @@ export function renderPostHtml(params: {
 
   const checklistHtml = post.checklist.length
     ? `<section id="checklist" class="card">
-        <h2 style="margin-top:0;">Room Styling Checklist</h2>
+        <h2 style="margin-top:0;">Checklist</h2>
         ${post.checklist
           .map(
             (item) => `<label class="checklist-item">
@@ -486,66 +1287,62 @@ export function renderPostHtml(params: {
       </section>`
     : '';
 
-  const nordicSpecDrawer =
-    theme.id === 'nordic-studio'
-      ? `<div class="spec-grid">
-          <div class="spec-tile"><div class="spec-label">Lighting Temp</div><div class="spec-value">2700K Warm Neutral</div></div>
-          <div class="spec-tile"><div class="spec-label">Primary Material</div><div class="spec-value">White Oak &amp; Belgian Linen</div></div>
-          <div class="spec-tile"><div class="spec-label">Routing Pattern</div><div class="spec-value">${escapeHtml(route.web_path)}</div></div>
-        </div>`
+  const sourceAuthor = String((post.raw_meta && post.raw_meta.author) || '').trim();
+  const metaParts: string[] = [];
+  if (sourceAuthor) metaParts.push(`<span>By <strong>${escapeHtml(sourceAuthor)}</strong></span>`);
+  if (post.modified || post.date) {
+    metaParts.push(
+      `<time datetime="${escapeHtml(post.modified || post.date)}">${escapeHtml(post.modified || post.date)}</time>`
+    );
+  }
+  const metaRowHtml = metaParts.length ? `<div class="meta-row">${metaParts.join('')}</div>` : '';
+
+  // Exact source content only — no invented filler text
+  // If there is no separate hero-frame, promote the first inline image to eager LCP (fetchpriority="high")
+  let finalContentHtml = post.content_html || '';
+  let lcpPreloadSrc = renderSeparateHero ? imgSrc : '';
+  if (!renderSeparateHero && finalContentHtml) {
+    const promoted = promoteFirstBodyImageToLcp(finalContentHtml);
+    finalContentHtml = promoted.html;
+    lcpPreloadSrc = promoted.lcpSrc || imgSrc;
+  }
+
+  const bodyHtml = finalContentHtml
+    ? `<section class="article-body">${finalContentHtml}</section>`
+    : post.excerpt
+      ? `<section class="article-body"><p>${escapeHtml(post.excerpt)}</p></section>`
       : '';
 
-  const pinBadge =
-    theme.id === 'pinterest-mag'
-      ? `<span class="pin-badge">📌 Save to Pinterest</span>`
-      : '';
+  // Prefer same-category related posts first, then fill with latest posts
+  const others = allPosts.filter((p) => p.slug !== post.slug);
+  const sameCat = others.filter((p) => p.category_slug && p.category_slug === post.category_slug);
+  const otherCat = others.filter((p) => !p.category_slug || p.category_slug !== post.category_slug);
+  const related = [...sameCat, ...otherCat].slice(0, 3);
 
-  const tocHtml = branding.enable_toc
-    ? `<nav class="card toc-box" aria-label="Table of Contents">
-        <strong>In This Editorial Guide</strong>
-        <ol class="toc-list">
-          <li><a href="#overview">Design Direction &amp; Spatial Strategy</a></li>
-          ${post.takeaways.length ? '<li><a href="#takeaways">Key Architectural Takeaways</a></li>' : ''}
-          ${post.checklist.length ? '<li><a href="#checklist">Room Styling Checklist</a></li>' : ''}
-          ${branding.enable_faq ? '<li><a href="#faq">Frequently Asked Questions</a></li>' : ''}
-        </ol>
-      </nav>`
-    : '';
-
-  const faqHtml = branding.enable_faq
-    ? `<section id="faq" class="card">
-        <h2 style="margin-top:0;">Frequently Asked Questions</h2>
-        <p><strong>How do I adapt ${escapeHtml(post.title)} for smaller rooms?</strong><br/>Anchor the space with a single cohesive neutral tone, keep vertical sightlines unobstructed, and layer warm 2700K task lighting.</p>
-        <p style="margin-bottom:0;"><strong>Which materials pair best with this ${escapeHtml(post.category || 'interior')} aesthetic?</strong><br/>Unbleached linen, matte honed stone, brushed brass, and natural wide-plank timber create lasting tactile contrast.</p>
-      </section>`
-    : '';
-
-  const eeatHtml = branding.enable_eeat
-    ? `<aside class="eeat-box">
-        <div class="author-avatar">${escapeHtml((branding.author_name || 'A').charAt(0).toUpperCase())}</div>
-        <div>
-          <strong>${escapeHtml(branding.author_name || 'Anna Lindqvist')}</strong>
-          <div style="font-size:0.86rem;color:${theme.muted_text};">${escapeHtml(branding.author_bio || 'Senior Interior Architect & Stylist')}</div>
-        </div>
-      </aside>`
-    : '';
-
-  const related = allPosts.filter((p) => p.slug !== post.slug).slice(0, 3);
   const relatedHtml = related.length
-    ? `<section style="margin-top:2.5rem;">
-        <h2>More Curated Guides</h2>
+    ? `<section class="related-container" aria-label="Related Articles">
+        <div class="section-header-row" style="border-top:1px solid ${theme.card_border};padding-top:2.75rem;">
+          <div>
+            <h2 class="section-title">Related Articles</h2>
+            <p class="section-subtitle">Continue exploring guides from ${escapeHtml(identity.siteName)}.</p>
+          </div>
+          <a class="section-meta-link" href="/sitemap/">Browse All Articles &rarr;</a>
+        </div>
         <div class="posts-grid">
           ${related
             .map((rel) => {
               const relRoute = resolvePostRoute(rel, routingMode);
-              const relImg = resolveImageSrc(rel, theme.accent);
+              const relHasImg = Boolean((rel.local_image_path || rel.image_url || '').trim());
+              const relImg = relHasImg ? resolveImageSrc(rel, theme.accent) : '';
               return `<article class="post-card">
-                <a href="${escapeHtml(relRoute.web_path)}">
-                  <img src="${escapeHtml(relImg)}" alt="${escapeHtml(rel.title)}" onerror="this.onerror=null;this.src='${fallbackUri}';" />
+                <a class="post-card-link" href="${escapeHtml(relRoute.web_path)}">
+                  ${relImg ? `<div class="post-card-media"><img src="${escapeHtml(relImg)}" alt="${escapeHtml(rel.title)}" width="600" height="400" loading="lazy" decoding="async" /></div>` : ''}
                   <div class="post-card-body">
-                    <span class="eyebrow" style="margin-bottom:0.2rem;">${escapeHtml(rel.category)}</span>
+                    ${rel.category ? `<span class="post-card-kicker">${escapeHtml(rel.category)}</span>` : ''}
                     <h3 class="post-card-title">${escapeHtml(rel.title)}</h3>
+                    ${rel.excerpt ? `<p class="post-card-excerpt">${escapeHtml(rel.excerpt.slice(0, 150))}</p>` : ''}
                   </div>
+                  <div class="post-card-read-strip"><span>Read Article</span><span>&rarr;</span></div>
                 </a>
               </article>`;
             })
@@ -554,68 +1351,57 @@ export function renderPostHtml(params: {
       </section>`
     : '';
 
-  const bodyHtml = post.content_html
-    ? `<section id="overview" class="card">${post.content_html}</section>`
-    : `<section id="overview" class="card">
-        <h2 style="margin-top:0;">Design Direction &amp; Spatial Strategy</h2>
-        <p>${escapeHtml(post.excerpt || `Discover timeless material pairings, spatial proportions, and curated styling principles for ${post.title}.`)}</p>
-        <p style="margin-bottom:0;">Every element is balanced for calm visual rhythm—combining natural textures, functional storage architecture, and intentional warm lighting across the entire room layout.</p>
-      </section>`;
+  const breadcrumbItems: string[] = [`<a href="/">Home</a>`];
+  if (post.category && post.category_slug) {
+    breadcrumbItems.push(
+      `<span class="breadcrumbs-sep">/</span><a href="/${escapeHtml(post.category_slug)}/">${escapeHtml(post.category)}</a>`
+    );
+  }
+  breadcrumbItems.push(`<span class="breadcrumbs-sep">/</span><span>${escapeHtml(post.title)}</span>`);
 
-  const jsonLd = JSON.stringify({
+  const jsonLdObj: Record<string, unknown> = {
     '@context': 'https://schema.org',
     '@type': 'Article',
     headline: post.title,
-    description: post.excerpt,
+    description: post.excerpt || post.title,
     datePublished: post.date,
     dateModified: post.modified,
-    author: { '@type': 'Person', name: branding.author_name || 'Anna Lindqvist' },
-    publisher: { '@type': 'Organization', name: branding.brand_name || 'Atelier Maison' },
-  });
+    publisher: { '@type': 'Organization', name: identity.siteName },
+  };
+  if (sourceAuthor) {
+    jsonLdObj.author = { '@type': 'Person', name: sourceAuthor };
+  }
+  if (absImgUrl) {
+    jsonLdObj.image = absImgUrl;
+  }
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>${escapeHtml(post.title)} — ${escapeHtml(branding.brand_name || 'Atelier Maison')}</title>
+  <title>${escapeHtml(post.title)} &mdash; ${escapeHtml(identity.siteName)}</title>
   <meta name="description" content="${escapeHtml(post.excerpt || post.title)}" />
   <link rel="canonical" href="${escapeHtml(canonical)}" />
-  <script type="application/ld+json">${jsonLd}</script>
-  ${renderBaseStyles(theme)}
+  <script type="application/ld+json">${JSON.stringify(jsonLdObj)}</script>
+  ${renderBaseStyles(theme, lcpPreloadSrc)}
 </head>
 <body>
-  ${renderHeader(branding, categories, theme)}
-  <main class="container">
-    <article class="article-shell">
-      <div style="font-size:0.78rem;color:${theme.muted_text};margin-bottom:0.85rem;">
-        ${route.breadcrumbs.map((b) => escapeHtml(b.name)).join(' &rsaquo; ')}
-      </div>
-      <span class="eyebrow">${escapeHtml(post.category || 'Editorial')} &middot; ${escapeHtml(theme.name)}</span>
+  ${renderHeader(branding, categories, identity)}
+  <main>
+    <article class="article-container">
+      <nav class="breadcrumbs" aria-label="Breadcrumb">${breadcrumbItems.join('')}</nav>
+      ${post.category ? `<span class="kicker">${escapeHtml(post.category)}</span>` : ''}
       <h1>${escapeHtml(post.title)}</h1>
-      <p class="excerpt">${escapeHtml(post.excerpt)}</p>
-      <div class="meta-row">
-        <span>By <strong>${escapeHtml(branding.author_name || 'Anna Lindqvist')}</strong></span>
-        <span>Updated ${escapeHtml(post.modified || post.date || '2026-10-25')}</span>
-        <span>Source: ${escapeHtml(sourceDomain)}</span>
-      </div>
-      <div class="hero-frame">
-        ${pinBadge}
-        <img src="${escapeHtml(imgSrc)}" alt="${escapeHtml(post.title)}" onerror="this.onerror=null;this.src='${fallbackUri}';" />
-      </div>
-      ${nordicSpecDrawer}
-      ${tocHtml}
+      ${metaRowHtml}
+      ${heroHtml}
       ${bodyHtml}
       ${takeawaysHtml}
       ${checklistHtml}
-      ${faqHtml}
-      ${eeatHtml}
-      ${relatedHtml}
     </article>
+    ${relatedHtml}
   </main>
-  <footer class="site-footer">
-    &copy; ${new Date().getFullYear()} ${escapeHtml(branding.brand_name || 'Atelier Maison')} &middot; ${escapeHtml(branding.tagline || 'Interior Design & Curated Living')}
-  </footer>
+  ${renderFooter(branding, categories, identity)}
 </body>
 </html>`;
 }
@@ -629,55 +1415,229 @@ export function renderHubHtml(params: {
   title?: string;
   subtitle?: string;
   baseUrl?: string;
+  customDomain?: string;
+  projectName?: string;
+  isCategoryPage?: boolean;
+  categoryName?: string;
 }): string {
-  const { posts, categories, themeKey, branding, routingMode, title, subtitle } = params;
-  const theme = getThemeTokens(themeKey);
-  const brand = branding.brand_name || 'Atelier Maison';
-  const hubTitle = title || `${brand} Editorial Hub`;
-  const hubSubtitle = subtitle || branding.tagline || 'Curated Home Organization, Room Checklists, and Architectural Guides.';
+  const {
+    posts,
+    categories,
+    themeKey,
+    branding,
+    routingMode,
+    title,
+    subtitle,
+    baseUrl = '',
+    customDomain = '',
+    projectName = '',
+    isCategoryPage = false,
+    categoryName = '',
+  } = params;
 
-  const cardsHtml = posts
+  const theme = getThemeTokens(themeKey);
+  const identity = resolveSiteIdentity({ customDomain, baseUrl, branding, projectName });
+  const pageTitle = title || `${identity.siteName} — Home & Design Guides`;
+  const pageDesc = subtitle || identity.tagline;
+
+  // Category archive page layout
+  if (isCategoryPage) {
+    let firstCardImg = '';
+    const cardsHtml = posts
+      .map((post, idx) => {
+        const route = resolvePostRoute(post, routingMode);
+        const hasImg = Boolean((post.local_image_path || post.image_url || '').trim());
+        const imgSrc = hasImg ? resolveImageSrc(post, theme.accent) : '';
+        if (idx === 0 && imgSrc) firstCardImg = imgSrc;
+        const imgPriorityAttrs =
+          idx === 0 ? 'fetchpriority="high" decoding="async"' : 'loading="lazy" decoding="async"';
+        return `<article class="post-card">
+          <a class="post-card-link" href="${escapeHtml(route.web_path)}">
+            ${imgSrc ? `<div class="post-card-media"><img src="${escapeHtml(imgSrc)}" alt="${escapeHtml(post.title)}" width="600" height="400" ${imgPriorityAttrs} /></div>` : ''}
+            <div class="post-card-body">
+              ${post.category ? `<span class="post-card-kicker">${escapeHtml(post.category)}</span>` : ''}
+              <h2 class="post-card-title">${escapeHtml(post.title)}</h2>
+              ${post.excerpt ? `<p class="post-card-excerpt">${escapeHtml(post.excerpt.slice(0, 160))}</p>` : ''}
+            </div>
+            <div class="post-card-read-strip"><span>Read Article</span><span>&rarr;</span></div>
+          </a>
+        </article>`;
+      })
+      .join('');
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${escapeHtml(pageTitle)}</title>
+  <meta name="description" content="${escapeHtml(pageDesc)}" />
+  ${renderBaseStyles(theme, firstCardImg)}
+</head>
+<body>
+  ${renderHeader(branding, categories, identity)}
+  <main>
+    <section class="archive-header">
+      <div class="shell">
+        <nav class="breadcrumbs" aria-label="Breadcrumb">
+          <a href="/">Home</a>
+          <span class="breadcrumbs-sep">/</span>
+          <span>${escapeHtml(categoryName || pageTitle)}</span>
+        </nav>
+        <span class="kicker">Category Archive</span>
+        <h1>${escapeHtml(categoryName || pageTitle)}</h1>
+        ${pageDesc ? `<p class="excerpt" style="max-width:680px;margin-bottom:0;">${escapeHtml(pageDesc)}</p>` : ''}
+      </div>
+    </section>
+    <section class="section-band-plain section-pad">
+      <div class="shell">
+        <div class="posts-grid">${cardsHtml || '<p>No articles published in this category yet.</p>'}</div>
+      </div>
+    </section>
+  </main>
+  ${renderFooter(branding, categories, identity)}
+</body>
+</html>`;
+  }
+
+  // Homepage layout matching decohome.homeandrecipe.com:
+  // 1. Featured Story Hero Split
+  // 2. All Categories Grid (3 cols)
+  // 3. Latest Published Articles Grid (3 cols)
+  // 4. Editorial Newsletter Band
+  const leadPost = posts[0] || null;
+  const leadRoute = leadPost ? resolvePostRoute(leadPost, routingMode) : null;
+  const leadImg = leadPost ? resolveImageSrc(leadPost, theme.accent) : '';
+  const leadAuthor = leadPost ? String((leadPost.raw_meta && leadPost.raw_meta.author) || '').trim() : '';
+  const leadMetaParts: string[] = [];
+  if (leadAuthor) leadMetaParts.push(`<span>By <strong>${escapeHtml(leadAuthor)}</strong></span>`);
+  if (leadPost && (leadPost.modified || leadPost.date)) {
+    leadMetaParts.push(
+      `<time datetime="${escapeHtml(leadPost.modified || leadPost.date)}">${escapeHtml(leadPost.modified || leadPost.date)}</time>`
+    );
+  }
+
+  const heroSectionHtml = leadPost && leadRoute
+    ? `<section class="hero-split-band" aria-label="Featured Story">
+        <div class="shell">
+          <div class="hero-split-grid">
+            <a class="hero-split-media" href="${escapeHtml(leadRoute.web_path)}">
+              <img src="${escapeHtml(leadImg)}" alt="${escapeHtml(leadPost.title)}" width="${leadPost.image_width || 1200}" height="${leadPost.image_height || 750}" fetchpriority="high" decoding="async" />
+            </a>
+            <div>
+              ${leadPost.category ? `<span class="kicker">${escapeHtml(leadPost.category)}</span>` : '<span class="kicker">Featured Story</span>'}
+              <h1 class="hero-split-title"><a href="${escapeHtml(leadRoute.web_path)}">${escapeHtml(leadPost.title)}</a></h1>
+              ${leadPost.excerpt ? `<p class="hero-split-excerpt">${escapeHtml(leadPost.excerpt.slice(0, 220))}</p>` : ''}
+              ${leadMetaParts.length ? `<div class="hero-split-meta">${leadMetaParts.join(' &middot; ')}</div>` : ''}
+              <a class="hero-read-cta" href="${escapeHtml(leadRoute.web_path)}">Read Full Article &rarr;</a>
+            </div>
+          </div>
+        </div>
+      </section>`
+    : `<section class="hero-split-band">
+        <div class="shell" style="text-align:center;max-width:700px;">
+          <h1>${escapeHtml(identity.siteName)}</h1>
+          <p class="excerpt">${escapeHtml(identity.tagline)}</p>
+        </div>
+      </section>`;
+
+  const categoriesSectionHtml = categories.length
+    ? `<section class="section-band-plain section-pad" aria-label="All Categories">
+        <div class="shell">
+          <div class="section-header-row">
+            <div>
+              <h2 class="section-title">All Categories</h2>
+              <p class="section-subtitle">Explore our categories.</p>
+            </div>
+            <span class="section-subtitle">${categories.length} ${categories.length === 1 ? 'Category' : 'Categories'}</span>
+          </div>
+          <div class="categories-grid">
+            ${categories
+              .map((cat) => {
+                const catCount = posts.filter((p) => p.category_slug === cat.slug).length;
+                return `<a class="category-card" href="/${escapeHtml(cat.slug)}/">
+                  <div class="category-card-top">
+                    <h3 class="category-card-title">${escapeHtml(cat.name)}</h3>
+                    <span class="category-arrow-circle" aria-hidden="true">&rarr;</span>
+                  </div>
+                  <div class="category-card-foot">
+                    <span>Explore articles</span>
+                    <span>${catCount} ${catCount === 1 ? 'guide' : 'guides'} &rarr;</span>
+                  </div>
+                </a>`;
+              })
+              .join('')}
+          </div>
+        </div>
+      </section>`
+    : '';
+
+  const latestPosts = posts.length > 1 ? posts.slice(1, 13) : posts.slice(0, 12);
+  const latestCardsHtml = latestPosts
     .map((post) => {
       const route = resolvePostRoute(post, routingMode);
-      const imgSrc = resolveImageSrc(post, theme.accent);
-      const fallbackUri = buildInlineSvgDataUri(post.title, post.category, theme.accent);
+      const hasImg = Boolean((post.local_image_path || post.image_url || '').trim());
+      const imgSrc = hasImg ? resolveImageSrc(post, theme.accent) : '';
       return `<article class="post-card">
-        <a href="${escapeHtml(route.web_path)}">
-          <img src="${escapeHtml(imgSrc)}" alt="${escapeHtml(post.title)}" onerror="this.onerror=null;this.src='${fallbackUri}';" />
+        <a class="post-card-link" href="${escapeHtml(route.web_path)}">
+          ${imgSrc ? `<div class="post-card-media"><img src="${escapeHtml(imgSrc)}" alt="${escapeHtml(post.title)}" width="600" height="400" loading="lazy" decoding="async" /></div>` : ''}
           <div class="post-card-body">
-            <span class="eyebrow" style="margin-bottom:0.2rem;">${escapeHtml(post.category || 'Guide')}</span>
-            <h2 class="post-card-title">${escapeHtml(post.title)}</h2>
-            <p class="post-card-excerpt">${escapeHtml(post.excerpt.slice(0, 140))}</p>
+            ${post.category ? `<span class="post-card-kicker">${escapeHtml(post.category)}</span>` : ''}
+            <h3 class="post-card-title">${escapeHtml(post.title)}</h3>
+            ${post.excerpt ? `<p class="post-card-excerpt">${escapeHtml(post.excerpt.slice(0, 150))}</p>` : ''}
           </div>
         </a>
       </article>`;
     })
     .join('');
 
+  const latestSectionHtml = `<section class="section-band-soft section-pad" aria-label="Latest Published Articles">
+    <div class="shell">
+      <div class="section-header-row">
+        <div>
+          <h2 class="section-title">Latest Published Articles</h2>
+          <p class="section-subtitle">Fresh inspiration and practical guides from ${escapeHtml(identity.siteName)}.</p>
+        </div>
+        <a class="section-meta-link" href="/sitemap/">View Complete Directory &rarr;</a>
+      </div>
+      <div class="posts-grid">${latestCardsHtml}</div>
+    </div>
+  </section>`;
+
+  const newsletterSectionHtml = `<section class="newsletter-band" aria-label="Newsletter Signup">
+    <div class="shell">
+      <div class="newsletter-box">
+        <span class="kicker">Newsletter</span>
+        <h2 class="newsletter-title">Practical design advice, straight to your inbox</h2>
+        <p class="newsletter-copy">Get new guides, room ideas, and curated inspiration from ${escapeHtml(identity.siteName)} &mdash; no spam, unsubscribe anytime.</p>
+        <form class="newsletter-form" onsubmit="event.preventDefault(); this.nextElementSibling.textContent='Thanks for subscribing to ${escapeHtml(identity.siteName)}!'; this.reset();">
+          <input type="email" required placeholder="Enter your email address" aria-label="Email address" />
+          <button type="submit" class="btn-solid">Subscribe</button>
+        </form>
+        <p class="form-feedback" aria-live="polite"></p>
+      </div>
+    </div>
+  </section>`;
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>${escapeHtml(hubTitle)}</title>
-  <meta name="description" content="${escapeHtml(hubSubtitle)}" />
-  ${renderBaseStyles(theme)}
+  <title>${escapeHtml(pageTitle)}</title>
+  <meta name="description" content="${escapeHtml(pageDesc)}" />
+  <link rel="canonical" href="${escapeHtml(identity.siteUrl)}/" />
+  ${renderBaseStyles(theme, leadImg)}
 </head>
 <body>
-  ${renderHeader(branding, categories, theme)}
-  <main class="container">
-    <section class="hub-hero">
-      <span class="eyebrow">${escapeHtml(theme.name)}</span>
-      <h1>${escapeHtml(hubTitle)}</h1>
-      <p class="excerpt">${escapeHtml(hubSubtitle)}</p>
-    </section>
-    <section class="posts-grid">
-      ${cardsHtml}
-    </section>
+  ${renderHeader(branding, categories, identity)}
+  <main>
+    ${heroSectionHtml}
+    ${categoriesSectionHtml}
+    ${latestSectionHtml}
+    ${newsletterSectionHtml}
   </main>
-  <footer class="site-footer">
-    &copy; ${new Date().getFullYear()} ${escapeHtml(brand)} &middot; Powered by Multi-Cloud Static Architecture
-  </footer>
+  ${renderFooter(branding, categories, identity)}
 </body>
 </html>`;
 }
@@ -689,16 +1649,71 @@ export function renderCategoryIndexHtml(params: {
   themeKey: string;
   branding: BrandingConfig;
   routingMode: string;
+  baseUrl?: string;
+  customDomain?: string;
+  projectName?: string;
 }): string {
+  const identity = resolveSiteIdentity({
+    customDomain: params.customDomain,
+    baseUrl: params.baseUrl,
+    branding: params.branding,
+    projectName: params.projectName,
+  });
   return renderHubHtml({
     posts: params.posts,
     categories: params.categories,
     themeKey: params.themeKey,
     branding: params.branding,
     routingMode: params.routingMode,
-    title: `${params.category.name} — ${params.branding.brand_name || 'Atelier Maison'}`,
-    subtitle: `Browse curated ${params.category.name.toLowerCase()} guides, checklists, and styling inspiration.`,
+    baseUrl: params.baseUrl,
+    customDomain: params.customDomain,
+    projectName: params.projectName,
+    isCategoryPage: true,
+    categoryName: params.category.name,
+    title: `${params.category.name} — ${identity.siteName}`,
+    subtitle: `Browse curated ${params.category.name.toLowerCase()} guides and inspiration on ${identity.siteName}.`,
   });
+}
+
+export function renderStaticPageHtml(params: {
+  page: StaticPageSpec;
+  categories: CategoryItem[];
+  themeKey: string;
+  branding: BrandingConfig;
+  identity: SiteIdentity;
+}): string {
+  const { page, categories, themeKey, branding, identity } = params;
+  const theme = getThemeTokens(themeKey);
+  const canonical = `${identity.siteUrl.replace(/\/+$/, '')}/${page.slug}/`;
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${escapeHtml(page.title)} &mdash; ${escapeHtml(identity.siteName)}</title>
+  <meta name="description" content="${escapeHtml(page.description)}" />
+  <link rel="canonical" href="${escapeHtml(canonical)}" />
+  ${renderBaseStyles(theme)}
+</head>
+<body>
+  ${renderHeader(branding, categories, identity)}
+  <main>
+    <article class="article-container">
+      <nav class="breadcrumbs" aria-label="Breadcrumb">
+        <a href="/">Home</a>
+        <span class="breadcrumbs-sep">/</span>
+        <span>${escapeHtml(page.title)}</span>
+      </nav>
+      <h1>${escapeHtml(page.title)}</h1>
+      <div class="article-body">
+        ${page.bodyHtml}
+      </div>
+    </article>
+  </main>
+  ${renderFooter(branding, categories, identity)}
+</body>
+</html>`;
 }
 
 export function getSamplePostForTheme(themeKey: string): PostItem {
@@ -834,4 +1849,3 @@ export function getSeedPosts(): PostItem[] {
     raw_meta: {},
   }));
 }
-
