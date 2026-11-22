@@ -46,6 +46,7 @@ export interface BrandingConfig {
   enable_faq: boolean;
   enable_eeat: boolean;
   social_links: Record<string, string>;
+  custom_head_code?: string;
 }
 
 export interface ProjectItem {
@@ -67,6 +68,7 @@ export interface ProjectItem {
   output_dir: string;
   max_posts: number;
   download_images: boolean;
+  custom_head_code?: string;
 }
 
 export interface AppConfig {
@@ -340,6 +342,7 @@ export function createDefaultConfig(): AppConfig {
         tiktok: '',
         youtube: '',
       },
+      custom_head_code: '',
     },
     active_project: 'stylesdays',
     projects: {},

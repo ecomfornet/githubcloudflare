@@ -111,6 +111,13 @@
     cfgSocialTwitter: document.getElementById('cfgSocialTwitter'),
     cfgSocialTiktok: document.getElementById('cfgSocialTiktok'),
     cfgSocialYoutube: document.getElementById('cfgSocialYoutube'),
+    cfgCustomHeadCode: document.getElementById('cfgCustomHeadCode'),
+    btnSaveHeadCode: document.getElementById('btnSaveHeadCode'),
+    btnClearHeadCode: document.getElementById('btnClearHeadCode'),
+    headCodeMetrics: document.getElementById('headCodeMetrics'),
+    headCodeStatusTag: document.getElementById('headCodeStatusTag'),
+    headOutputPreview: document.getElementById('headOutputPreview'),
+    headOutputVerifyBadge: document.getElementById('headOutputVerifyBadge'),
     quickLogoPreviewBox: document.getElementById('quickLogoPreviewBox'),
     quickLogoStatusBadge: document.getElementById('quickLogoStatusBadge'),
     quickBrandNameDisplay: document.getElementById('quickBrandNameDisplay'),
@@ -980,6 +987,10 @@
       if (DOM.cfgSocialTwitter) DOM.cfgSocialTwitter.value = socialLinks.twitter || '';
       if (DOM.cfgSocialTiktok) DOM.cfgSocialTiktok.value = socialLinks.tiktok || '';
       if (DOM.cfgSocialYoutube) DOM.cfgSocialYoutube.value = socialLinks.youtube || '';
+      if (DOM.cfgCustomHeadCode) {
+        DOM.cfgCustomHeadCode.value = branding.custom_head_code || activeProj.custom_head_code || '';
+        updateHeadCodeStats();
+      }
       updateLogoPreview(branding.logo_path, branding.brand_name);
 
       // Populate Preview Options
@@ -1666,6 +1677,154 @@
     updateEditorWordCount();
   }
 
+  function updateHeadCodeStats() {
+    if (!DOM.cfgCustomHeadCode) return;
+    const raw = DOM.cfgCustomHeadCode.value || '';
+    const trimmed = raw.trim();
+    const lines = trimmed ? trimmed.split(/\r?\n/).length : 0;
+    const chars = trimmed.length;
+    if (DOM.headCodeMetrics) {
+      DOM.headCodeMetrics.textContent = `${lines} ${lines === 1 ? 'line' : 'lines'} · ${chars} chars`;
+    }
+    if (DOM.headCodeStatusTag) {
+      if (chars > 0) {
+        DOM.headCodeStatusTag.textContent = `${lines}L Active`;
+        DOM.headCodeStatusTag.classList.add('has-code');
+      } else {
+        DOM.headCodeStatusTag.textContent = 'Empty';
+        DOM.headCodeStatusTag.classList.remove('has-code');
+      }
+    }
+  }
+
+  async function refreshHeadCodePreview() {
+    if (!DOM.headOutputPreview) return;
+    try {
+      const res = await api('/api/preview', 'POST', { view_mode: 'hub' });
+      const html = String((res && res.html) || '');
+      const headMatch = html.match(/<head>[\s\S]*?<\/head>/i);
+      if (!headMatch) {
+        DOM.headOutputPreview.textContent = 'Unable to inspect generated <head>.';
+        return;
+      }
+      const headBlock = headMatch[0];
+      const styleIdx = headBlock.search(/<style\b/i);
+      const compactHead =
+        styleIdx >= 0
+          ? `${headBlock.slice(0, styleIdx).trimEnd()}\n  <style>/* ... theme CSS ... */</style>\n</head>`
+          : headBlock;
+      DOM.headOutputPreview.textContent = compactHead;
+
+      if (DOM.headOutputVerifyBadge) {
+        const hasInjected = headBlock.includes('<!-- Custom Header Code -->');
+        const beforeStyle =
+          hasInjected && (styleIdx < 0 || headBlock.indexOf('<!-- Custom Header Code -->') < styleIdx);
+        if (beforeStyle) {
+          DOM.headOutputVerifyBadge.textContent = '✓ Active at top of <head>';
+          DOM.headOutputVerifyBadge.style.color = '#34D399';
+        } else if (hasInjected) {
+          DOM.headOutputVerifyBadge.textContent = '✓ Active inside <head>';
+          DOM.headOutputVerifyBadge.style.color = '#34D399';
+        } else {
+          DOM.headOutputVerifyBadge.textContent = 'No custom code active';
+          DOM.headOutputVerifyBadge.style.color = '#94A3B8';
+        }
+      }
+    } catch {
+      DOM.headOutputPreview.textContent = 'Save your header code to inspect the generated homepage <head>.';
+    }
+  }
+
+  function initModelsSubtabsAndHeadCode() {
+    const subtabBtns = document.querySelectorAll('.models-subtab-btn[data-subpanel]');
+    subtabBtns.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const targetId = btn.getAttribute('data-subpanel');
+        if (!targetId) return;
+        subtabBtns.forEach((b) => {
+          const isMatch = b === btn;
+          b.classList.toggle('active', isMatch);
+          b.setAttribute('aria-selected', isMatch ? 'true' : 'false');
+        });
+        document.querySelectorAll('.models-subpanel').forEach((panel) => {
+          panel.classList.toggle('active', panel.id === targetId);
+        });
+        if (targetId === 'modelsSubpanelHeadCode') {
+          refreshHeadCodePreview();
+        }
+      });
+    });
+
+    if (DOM.cfgCustomHeadCode) {
+      DOM.cfgCustomHeadCode.addEventListener('input', updateHeadCodeStats);
+      updateHeadCodeStats();
+    }
+
+    const SNIPPETS = {
+      ga4: `<!-- Google Analytics (GA4) -->\n<script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>\n<script>\n  window.dataLayer = window.dataLayer || [];\n  function gtag(){dataLayer.push(arguments);}\n  gtag('js', new Date());\n  gtag('config', 'G-XXXXXXXXXX');\n</script>`,
+      gsc: `<!-- Google Search Console Verification -->\n<meta name="google-site-verification" content="YOUR_VERIFICATION_TOKEN" />`,
+      pinterest: `<!-- Pinterest Domain Verification -->\n<meta name="p:domain_verify" content="YOUR_PINTEREST_CODE" />`,
+      custom_js: `<!-- Custom Script -->\n<script defer>\n  // Your custom JavaScript code here\n</script>`,
+    };
+
+    document.querySelectorAll('.head-snippet-btn[data-snippet]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        if (!DOM.cfgCustomHeadCode) return;
+        const key = btn.getAttribute('data-snippet');
+        const snippet = key && SNIPPETS[key];
+        if (!snippet) return;
+        const current = DOM.cfgCustomHeadCode.value.trim();
+        DOM.cfgCustomHeadCode.value = current ? `${current}\n\n${snippet}` : snippet;
+        updateHeadCodeStats();
+        DOM.cfgCustomHeadCode.focus();
+      });
+    });
+
+    if (DOM.btnClearHeadCode) {
+      DOM.btnClearHeadCode.addEventListener('click', () => {
+        if (!DOM.cfgCustomHeadCode) return;
+        DOM.cfgCustomHeadCode.value = '';
+        updateHeadCodeStats();
+        showToast('Header code cleared. Click Save Header Code to apply.', 'info');
+      });
+    }
+
+    if (DOM.btnSaveHeadCode) {
+      DOM.btnSaveHeadCode.addEventListener('click', async () => {
+        const code = DOM.cfgCustomHeadCode ? DOM.cfgCustomHeadCode.value.trim() : '';
+        const prevText = DOM.btnSaveHeadCode.textContent;
+        DOM.btnSaveHeadCode.disabled = true;
+        DOM.btnSaveHeadCode.textContent = 'Saving...';
+        try {
+          await api('/api/config', 'POST', {
+            branding: {
+              custom_head_code: code,
+            },
+          });
+          updateHeadCodeStats();
+          showToast(
+            code ? 'Custom <head> code saved. Build & Deploy in Step 4 to publish live.' : 'Custom <head> code cleared and saved.',
+            'success'
+          );
+          appendTerminalLog(
+            code
+              ? `[HEAD CODE] Saved ${code.length} chars of custom <head> code for active project.`
+              : '[HEAD CODE] Cleared custom <head> code for active project.',
+            'success'
+          );
+          await refreshSystem();
+          await refreshHeadCodePreview();
+          triggerPreview();
+        } catch (err) {
+          showToast(`Failed saving header code: ${err.message}`, 'error');
+        } finally {
+          DOM.btnSaveHeadCode.disabled = false;
+          DOM.btnSaveHeadCode.textContent = prevText;
+        }
+      });
+    }
+  }
+
   function initRichTextEditor() {
     if (DOM.rteToolbar) {
       DOM.rteToolbar.querySelectorAll('.rte-btn[data-cmd]').forEach((btn) => {
@@ -1927,7 +2086,7 @@
     const THEME_ACCENT = {
       'editorial-warm': '#E7E2DA',
       'nordic-studio':  '#0F766E',
-      'pinterest-mag':  '#09090B',
+      'pinterest-mag':  '#C89B54',
     };
 
     const THEME_DEMOS = {
@@ -1974,24 +2133,24 @@
         ],
       },
       'pinterest-mag': {
-        slug: '16-coastal-bedroom-decor-essentials-transform-your-space',
-        title: '16 Coastal Bedroom Decor Essentials: Transform Your Beach House Space',
-        excerpt: 'Styleire modern editorial layout: 78-page pSEO architecture with room category silos, author E-E-A-T credentials, 3-tier JSON-LD schemas, and complete trust suite.',
+        slug: '12-botanical-sanctuary-interiors-sunlit-spaces',
+        title: '12 Botanical Sanctuary Interiors & Sunlit Coffee Bar Ideas',
+        excerpt: 'Botanical Atelier Magazine: deep forest emerald header & split cover hero, champagne gold CTAs, mist sage reading canvas, Fraunces editorial serif, and sticky numbered guide sidebar.',
         local_image_path: '/assets/images/16-coastal-bedroom-decor-essentials-transform-your-space.webp',
-        category: 'Coastal Decor',
-        category_slug: 'coastal-decor',
-        parent_slug: 'bedroom-ideas',
+        category: 'Botanical Living',
+        category_slug: 'botanical-living',
+        parent_slug: 'home-decor',
         date: '2026-10-16',
         takeaways: [
-          'Coastal Palette: Sandy neutrals, seafoam whites, and driftwood greys create instant beach house atmosphere.',
-          'Natural Fibre Textiles: Jute rugs, linen throws, and rattan furniture bring organic coastal warmth indoors.',
-          'Pinterest-Worthy Styling: Vertical stripes, oversized mirrors, and layered cushion arrangements drive 98% save rates.',
+          'Deep Forest & Brass Contrast: Pairing #0F2A22 millwork with warm champagne brass creates timeless architectural depth.',
+          'Soft Mist Alabaster Walls: Subtle sage-tinted neutrals keep rooms airy while harmonizing with natural foliage.',
+          'Structured Editorial Rhythm: Generous whitespace and numbered section anchors make long-form guides effortless to scan.',
         ],
         checklist: [
-          { id: 'step-1', text: 'Choose a coastal neutral palette: Sandy, Seafoam, Driftwood, and Coral accent' },
-          { id: 'step-2', text: 'Source jute or seagrass rug as the room anchor piece' },
-          { id: 'step-3', text: 'Add 3 layers of cushions in varying textures: linen, velvet, embroidered' },
-          { id: 'step-4', text: 'Style a decorative shelf with shells, coral pieces, and whitewashed driftwood frames' },
+          { id: 'step-1', text: 'Sample deep forest or olive paint swatches in both morning and evening light' },
+          { id: 'step-2', text: 'Pair honed stone counters with brushed champagne-brass cabinet pulls' },
+          { id: 'step-3', text: 'Add two tall sculptural indoor plants near primary natural light sources' },
+          { id: 'step-4', text: 'Install dimmable 2700K warm sconces for soft evening ambiance' },
         ],
       },
     };
@@ -2007,7 +2166,7 @@
           b.style.borderWidth = '2px';
         });
 
-        const accentMap = { 'editorial-warm': '#E60023', 'nordic-studio': '#8C6D53', 'pinterest-mag': '#09090B' };
+        const accentMap = { 'editorial-warm': '#E60023', 'nordic-studio': '#8C6D53', 'pinterest-mag': '#C89B54' };
         btn.style.boxShadow = `0 0 0 2px ${accentMap[theme] || '#666'}`;
         btn.style.borderColor = accentMap[theme] || '#666';
 
@@ -2570,6 +2729,7 @@
               tiktok: DOM.cfgSocialTiktok ? DOM.cfgSocialTiktok.value.trim() : '',
               youtube: DOM.cfgSocialYoutube ? DOM.cfgSocialYoutube.value.trim() : '',
             },
+            custom_head_code: DOM.cfgCustomHeadCode ? DOM.cfgCustomHeadCode.value.trim() : '',
           },
         });
 
@@ -2946,6 +3106,7 @@
     });
     DOM.editPostForm.addEventListener('submit', (e) => handlePostSave(e, false));
     initRichTextEditor();
+    initModelsSubtabsAndHeadCode();
 
     // Preview Events
     DOM.previewPostSelect.addEventListener('change', () => {
@@ -3092,7 +3253,7 @@
       const themeNames = {
         'editorial-warm': 'Model 1 · Kinfolk Journal',
         'nordic-studio': 'The Nordroom (Scandinavian Minimalist)',
-        'pinterest-mag': 'Model 3 · Styleire Magazine (Editorial & Trust Suite)',
+        'pinterest-mag': 'Model 3 · Botanical Atelier (Forest & Gold Magazine)',
       };
 
       const routingNames = {

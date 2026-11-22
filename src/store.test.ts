@@ -12,6 +12,7 @@ import {
 } from './types.ts';
 import { DashboardStore } from './store.ts';
 import { assertSafePublicUrl } from './scraper.ts';
+import { extractArticleTocAndAnchors, getThemeTokens, renderCustomHeadCode } from './templates.ts';
 
 test('pure helpers: maskToken, slugify, deriveBrandFromDomain', () => {
   assert.equal(maskToken(''), '');
@@ -848,13 +849,20 @@ test('PageSpeed optimizations: zero render-blocking stylesheets, LCP preload + f
         false,
         `Found render-blocking stylesheet in ${themeKey}`
       );
-      // Only load the theme's required serif family (editorial-warm / pinterest-mag must NOT load Cormorant Garamond)
+      // Only load the theme's required font family (zero unused font payloads)
       if (themeKey === 'nordic-studio') {
         assert.match(postHtml, /Cormorant\+Garamond/);
         assert.equal(postHtml.includes('Playfair+Display'), false);
+        assert.equal(postHtml.includes('Fraunces'), false);
+      } else if (themeKey === 'pinterest-mag') {
+        assert.match(postHtml, /Fraunces/);
+        assert.match(postHtml, /DM\+Sans/);
+        assert.equal(postHtml.includes('Playfair+Display'), false);
+        assert.equal(postHtml.includes('Cormorant+Garamond'), false);
       } else {
         assert.match(postHtml, /Playfair\+Display/);
         assert.equal(postHtml.includes('Cormorant+Garamond'), false);
+        assert.equal(postHtml.includes('Fraunces'), false);
       }
 
       // 2. LCP Hero Image has <link rel="preload" as="image" fetchpriority="high"> AND fetchpriority="high" without loading="lazy"
@@ -1221,7 +1229,119 @@ test('security & stability audit: blocks IPv4-mapped IPv6 & private worker URLs,
   }
 });
 
+test('Model 3 Botanical Atelier renders distinct Forest & Gold design, Fraunces/DM Sans fonts, and sticky TOC sidebar without affecting Models 1-2', async () => {
+  // 1. Verify theme tokens and alias
+  const tokens = getThemeTokens('pinterest-mag');
+  assert.equal(tokens.header_bg, '#0F2A22');
+  assert.equal(tokens.secondary_accent, '#C89B54');
+  assert.equal(tokens.bg_body, '#F3F5F1');
+  assert.match(tokens.font_headline, /Fraunces/);
+  assert.match(tokens.font_body, /DM Sans/);
+  assert.equal(getThemeTokens('styleire').id, 'pinterest-mag');
 
+  // 2. Verify pure heading extraction & anchor injection
+  const sampleHtml = '<p>Intro.</p><h2>Vertical Shelving</h2><p>Details.</p><h3 id="custom-id">Warm Lighting</h3>';
+  const toc = extractArticleTocAndAnchors(sampleHtml);
+  assert.equal(toc.headings.length, 2);
+  assert.deepEqual(toc.headings[0], { id: 'guide-section-1', text: 'Vertical Shelving', num: '01' });
+  assert.deepEqual(toc.headings[1], { id: 'custom-id', text: 'Warm Lighting', num: '02' });
+  assert.match(toc.html, /<h2 id="guide-section-1">Vertical Shelving<\/h2>/);
+  assert.match(toc.html, /<h3 id="custom-id">Warm Lighting<\/h3>/);
 
+  // 3. Render Model 3 homepage & article and ensure Model 1 stays isolated
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pseo-model3-atelier-'));
+  try {
+    const store = new DashboardStore({ workspaceDir: tmpDir });
+    await store.executeIngestion({ sourceType: 'sitemap', urlOrList: '' });
+    const slug = store.listPosts()[0].slug;
+    store.updatePost(slug, {
+      content_html:
+        '<p>Opening paragraph with drop-cap support.</p>' +
+        '<h2>Olive Cabinetry &amp; Brass Hardware</h2><p>Section one details.</p>' +
+        '<h2>Layered Daylight &amp; Foliage</h2><p>Section two details.</p>',
+    });
 
+    const m3Home = store.renderPreview({ theme: 'pinterest-mag', viewMode: 'hub' });
+    assert.match(m3Home, /class="theme-pinterest-mag"/);
+    assert.match(m3Home, /family=Fraunces:/);
+    assert.match(m3Home, /family=DM\+Sans:/);
+    assert.match(m3Home, /body\.theme-pinterest-mag \.hero-split-band/);
+
+    const m3Post = store.renderPreview({ slug, theme: 'pinterest-mag', viewMode: 'post' });
+    assert.match(m3Post, /class="atelier-article-banner"/);
+    assert.match(m3Post, /class="atelier-article-grid"/);
+    assert.match(m3Post, /In This Guide/);
+    assert.match(m3Post, /href="#guide-section-1"/);
+    assert.match(m3Post, /<h2 id="guide-section-1">Olive Cabinetry &amp; Brass Hardware<\/h2>/);
+
+    // Ensure Model 1 remains completely untouched
+    const m1Post = store.renderPreview({ slug, theme: 'editorial-warm', viewMode: 'post' });
+    assert.match(m1Post, /class="theme-editorial-warm"/);
+    assert.equal(m1Post.includes('atelier-article-banner'), false);
+    assert.equal(m1Post.includes('body.theme-pinterest-mag'), false);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('custom <head> code saves per project, strips breakout tags, and injects at top of <head> (before <style>) across Home, Posts, Categories, and Static pages', async () => {
+  // 1. Pure helper strips premature </head> / <body> breakout tags and handles empty-after-sanitization
+  const cleaned = renderCustomHeadCode('<script async src="https://www.googletagmanager.com/gtag/js?id=G-TEST1234"></script></head><body>');
+  assert.match(cleaned, /G-TEST1234/);
+  assert.equal(/<\/head>/i.test(cleaned), false);
+  assert.equal(/<body>/i.test(cleaned), false);
+  assert.equal(renderCustomHeadCode('   '), '');
+  assert.equal(renderCustomHeadCode('</head><body></body></html>'), '');
+
+  // 2. Persist in store, build full site, verify injection at TOP of <head> (before <style>) on every page type
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pseo-head-code-test-'));
+  try {
+    const store = new DashboardStore({ workspaceDir: tmpDir });
+    await store.executeIngestion({ sourceType: 'sitemap', urlOrList: '' });
+
+    const gaSnippet =
+      '<meta name="google-site-verification" content="abc-verify-999" />\n' +
+      '<script async src="https://www.googletagmanager.com/gtag/js?id=G-999TEST888"></script>';
+    store.updateConfig({ branding: { custom_head_code: gaSnippet } });
+
+    const buildRes = store.runBuild({ clean: true, targetCloud: 'cloudflare', theme: 'pinterest-mag' });
+    assert.equal(buildRes.success, true);
+    const outDir = String(buildRes.output_dir);
+
+    const firstPost = store.listPosts()[0];
+    const filesToCheck = [
+      path.join(outDir, 'index.html'),
+      path.join(outDir, firstPost.slug, 'index.html'),
+      path.join(outDir, firstPost.category_slug, 'index.html'),
+      path.join(outDir, 'about', 'index.html'),
+    ];
+
+    for (const filePath of filesToCheck) {
+      const html = fs.readFileSync(filePath, 'utf-8');
+      const headMatch = html.match(/<head>([\s\S]*?)<\/head>/i);
+      assert.ok(headMatch, `Missing <head> in ${filePath}`);
+      const headContent = headMatch[1];
+      assert.match(headContent, /abc-verify-999/, `Missing verification meta inside <head> of ${filePath}`);
+      assert.match(headContent, /G-999TEST888/, `Missing GA4 script inside <head> of ${filePath}`);
+      const customIdx = headContent.indexOf('<!-- Custom Header Code -->');
+      const styleIdx = headContent.indexOf('<style>');
+      assert.ok(customIdx >= 0 && styleIdx > customIdx, `Custom <head> code must appear before <style> in ${filePath}`);
+    }
+
+    // 3. Survives DashboardStore reload from disk
+    const reloadedStore = new DashboardStore({ workspaceDir: tmpDir });
+    assert.match(reloadedStore.config.branding.custom_head_code || '', /G-999TEST888/);
+
+    // 4. Per-project isolation: newly created project starts clean (no GA4 leak), switching restores each project's code
+    reloadedStore.createProject({ name: 'Second Site', cf_project_name: 'secondsite' });
+    assert.equal(reloadedStore.config.branding.custom_head_code, '');
+    reloadedStore.updateConfig({ branding: { custom_head_code: '<script>window.__SECOND_SITE__=1;</script>' } });
+    reloadedStore.switchProject('stylesdays');
+    assert.match(reloadedStore.config.branding.custom_head_code || '', /G-999TEST888/);
+    reloadedStore.switchProject('second-site');
+    assert.match(reloadedStore.config.branding.custom_head_code || '', /__SECOND_SITE__/);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
 

@@ -303,6 +303,15 @@ export class DashboardStore {
       this.config.active_project = firstId;
     }
 
+    const activeProj = this.projects[this.activeProjectId];
+    if (activeProj) {
+      if (typeof activeProj.custom_head_code === 'string' && activeProj.custom_head_code.trim()) {
+        this.config.branding.custom_head_code = activeProj.custom_head_code;
+      } else if (typeof this.config.branding.custom_head_code === 'string' && this.config.branding.custom_head_code.trim()) {
+        activeProj.custom_head_code = this.config.branding.custom_head_code;
+      }
+    }
+
     const projManifest = this.resolveManifestPath(this.activeProjectId);
     if (fs.existsSync(projManifest)) {
       this.manifest = this.loadManifestFile(projManifest);
@@ -468,6 +477,7 @@ export class DashboardStore {
       output_dir: path.join('dist', platform === 'cloudflare' ? cfProj : pid),
       max_posts: 60,
       download_images: true,
+      custom_head_code: '',
     };
 
     this.projects[pid] = item;
@@ -483,6 +493,7 @@ export class DashboardStore {
     this.config.ingestion.sitemap_url = sitemapUrl;
     this.config.build.theme = theme;
     this.config.build.routing_mode = routingMode;
+    this.config.branding.custom_head_code = '';
 
     this.saveConfig();
     this.log(`Created isolated project '${cleanName}' (id=${pid}) with empty catalog.`);
@@ -592,6 +603,9 @@ export class DashboardStore {
     if (item.gh_owner) this.config.github.owner = item.gh_owner;
     if (item.gh_repo) this.config.github.repo = item.gh_repo;
     this.config.ingestion.sitemap_url = item.sitemap_url || '';
+    if (typeof item.custom_head_code === 'string') {
+      this.config.branding.custom_head_code = item.custom_head_code;
+    }
 
     this.saveConfig();
     this.log(`Switched active project to '${item.name}' (id=${pid}, ${Object.keys(this.manifest.posts).length} posts).`);
@@ -888,6 +902,12 @@ export class DashboardStore {
     if (br.enable_eeat !== undefined) this.config.branding.enable_eeat = Boolean(br.enable_eeat);
     else if (data.enable_eeat !== undefined) this.config.branding.enable_eeat = Boolean(data.enable_eeat);
 
+    if (typeof br.custom_head_code === 'string') {
+      this.config.branding.custom_head_code = br.custom_head_code.trim().slice(0, 50000);
+    } else if (typeof data.custom_head_code === 'string') {
+      this.config.branding.custom_head_code = data.custom_head_code.trim().slice(0, 50000);
+    }
+
     const social = (br.social_links || data.social_links) as Record<string, unknown> | undefined;
     if (social && typeof social === 'object') {
       for (const [k, v] of Object.entries(social)) {
@@ -905,6 +925,9 @@ export class DashboardStore {
       if (gh.repo !== undefined || data.github_repo !== undefined) active.gh_repo = this.config.github.repo;
       if (ing.sitemap_url !== undefined || data.sitemap_url !== undefined) {
         active.sitemap_url = this.config.ingestion.sitemap_url;
+      }
+      if (typeof br.custom_head_code === 'string' || typeof data.custom_head_code === 'string') {
+        active.custom_head_code = this.config.branding.custom_head_code || '';
       }
       this.config.projects[this.activeProjectId] = active;
     }

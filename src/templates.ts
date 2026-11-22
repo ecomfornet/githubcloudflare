@@ -61,21 +61,21 @@ export const THEMES: Record<string, ThemeTokens> = {
   },
   'pinterest-mag': {
     id: 'pinterest-mag',
-    name: 'Styleire Magazine (Editorial & Trust Suite)',
-    bg_body: '#FFFFFF',
-    text_body: '#09090B',
-    accent: '#09090B',
-    accent_hover: '#27272A',
-    secondary_accent: '#C2410C',
+    name: 'Botanical Atelier (Forest & Gold Magazine)',
+    bg_body: '#F3F5F1',
+    text_body: '#13221D',
+    accent: '#1B4D3E',
+    accent_hover: '#0F2A22',
+    secondary_accent: '#C89B54',
     card_bg: '#FFFFFF',
-    card_border: '#E4E4E7',
-    checkbox_bg: '#F4F4F5',
-    badge_bg: '#09090B',
-    font_headline: "'Playfair Display', 'Playfair Fallback', Georgia, serif",
-    font_body: "'Plus Jakarta Sans', 'Jakarta Fallback', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
-    header_bg: '#FFFFFF',
-    muted_text: '#52525B',
-    tag_bg: '#FAFAFA',
+    card_border: '#D8E0D8',
+    checkbox_bg: '#EAEFE9',
+    badge_bg: '#0F2A22',
+    font_headline: "'Fraunces', 'Fraunces Fallback', Georgia, serif",
+    font_body: "'DM Sans', 'DMSans Fallback', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+    header_bg: '#0F2A22',
+    muted_text: '#475851',
+    tag_bg: '#EAEFE9',
   },
 };
 
@@ -219,11 +219,67 @@ function renderFooterSocialLinksHtml(socialLinks?: Record<string, string>): stri
 }
 
 function getThemeFontStylesheetUrl(theme: ThemeTokens): string {
+  if (theme.id === 'pinterest-mag') {
+    return 'https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=DM+Sans:wght@400;500;600;700&display=swap';
+  }
   const headlineFamily =
     theme.id === 'nordic-studio'
       ? 'Cormorant+Garamond:wght@600;700'
       : 'Playfair+Display:wght@600;700';
   return `https://fonts.googleapis.com/css2?family=${headlineFamily}&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap`;
+}
+
+/**
+ * Extracts real H2/H3 section headings from article HTML and injects stable anchor IDs
+ * so the Model 3 sticky "In This Guide" sidebar links accurately to real sections.
+ */
+export function extractArticleTocAndAnchors(contentHtml: string): {
+  html: string;
+  headings: Array<{ id: string; text: string; num: string }>;
+} {
+  const headings: Array<{ id: string; text: string; num: string }> = [];
+  let idx = 0;
+  const html = String(contentHtml || '').replace(
+    /<(h2|h3)\b([^>]*)>([\s\S]*?)<\/\1>/gi,
+    (fullMatch, tag: string, attrs: string, inner: string) => {
+      const plainText = inner
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (!plainText || plainText.length < 3 || headings.length >= 8) {
+        return fullMatch;
+      }
+      idx += 1;
+      const num = String(idx).padStart(2, '0');
+      const existingIdMatch = attrs.match(/\bid\s*=\s*(?:"([^"]+)"|'([^']+)')/i);
+      const id = existingIdMatch ? (existingIdMatch[1] || existingIdMatch[2]) : `guide-section-${idx}`;
+      headings.push({ id, text: plainText.slice(0, 72), num });
+      if (existingIdMatch) return fullMatch;
+      return `<${tag}${attrs} id="${id}">${inner}</${tag}>`;
+    }
+  );
+  return { html, headings };
+}
+
+/**
+ * Formats site-owner custom <head> code (Google Analytics, verification meta tags, etc.)
+ * safely for injection inside <head>...</head>, preventing premature </head> or <body> breakout.
+ */
+export function renderCustomHeadCode(rawCode?: string): string {
+  const trimmed = String(rawCode || '').trim();
+  if (!trimmed) return '';
+  const safe = trimmed
+    .replace(/<\/head\s*>/gi, '')
+    .replace(/<body\b[^>]*>/gi, '')
+    .replace(/<\/body\s*>/gi, '')
+    .replace(/<\/html\s*>/gi, '')
+    .trim();
+  if (!safe) return '';
+  const indented = safe
+    .split(/\r?\n/)
+    .map((line) => `  ${line}`)
+    .join('\n');
+  return `\n  <!-- Custom Header Code -->\n${indented}\n  <!-- /Custom Header Code -->`;
 }
 
 function renderLcpPreloadLink(imgSrc: string): string {
@@ -258,20 +314,26 @@ export function promoteFirstBodyImageToLcp(contentHtml: string): { html: string;
 function renderBaseStyles(theme: ThemeTokens, lcpPreloadSrc = ''): string {
   const fontUrl = getThemeFontStylesheetUrl(theme);
   const preloadTag = renderLcpPreloadLink(lcpPreloadSrc);
-  return `
-  ${preloadTag}
-  <link rel="stylesheet" href="${fontUrl}" media="print" onload="this.media='all'" />
-  <noscript><link rel="stylesheet" href="${fontUrl}" /></noscript>
-  <style>
-    @font-face {
-      font-family: 'Playfair Fallback';
+  const fontFallbackCss =
+    theme.id === 'pinterest-mag'
+      ? `    @font-face {
+      font-family: 'Fraunces Fallback';
       src: local('Georgia'), local('Times New Roman');
-      ascent-override: 96%;
+      ascent-override: 95%;
       descent-override: 24%;
       line-gap-override: 0%;
-      size-adjust: 105%;
+      size-adjust: 104%;
     }
     @font-face {
+      font-family: 'DMSans Fallback';
+      src: local('Arial'), local('Helvetica Neue'), local('Roboto');
+      ascent-override: 95%;
+      descent-override: 24%;
+      line-gap-override: 0%;
+      size-adjust: 100%;
+    }`
+      : theme.id === 'nordic-studio'
+        ? `    @font-face {
       font-family: 'Cormorant Fallback';
       src: local('Georgia'), local('Times New Roman');
       ascent-override: 94%;
@@ -286,7 +348,29 @@ function renderBaseStyles(theme: ThemeTokens, lcpPreloadSrc = ''): string {
       descent-override: 25%;
       line-gap-override: 0%;
       size-adjust: 101%;
+    }`
+        : `    @font-face {
+      font-family: 'Playfair Fallback';
+      src: local('Georgia'), local('Times New Roman');
+      ascent-override: 96%;
+      descent-override: 24%;
+      line-gap-override: 0%;
+      size-adjust: 105%;
     }
+    @font-face {
+      font-family: 'Jakarta Fallback';
+      src: local('Arial'), local('Helvetica Neue'), local('Roboto');
+      ascent-override: 96%;
+      descent-override: 25%;
+      line-gap-override: 0%;
+      size-adjust: 101%;
+    }`;
+  return `
+  ${preloadTag}
+  <link rel="stylesheet" href="${fontUrl}" media="print" onload="this.media='all'" />
+  <noscript><link rel="stylesheet" href="${fontUrl}" /></noscript>
+  <style>
+${fontFallbackCss}
     *, *::before, *::after { box-sizing: border-box; }
     html, body {
       margin: 0;
@@ -1110,7 +1194,511 @@ function renderBaseStyles(theme: ThemeTokens, lcpPreloadSrc = ''): string {
       flex-wrap: wrap;
       font-size: 0.82rem;
     }
-    .footer-bottom a:hover { color: ${theme.accent}; }
+    .footer-bottom a:hover { color: ${theme.accent}; }${
+      theme.id === 'pinterest-mag'
+        ? `
+
+    /* =====================================================================
+       MODEL 3 — BOTANICAL ATELIER MAGAZINE (DEEP FOREST & CHAMPAGNE GOLD)
+       ===================================================================== */
+    body.theme-pinterest-mag {
+      background: #F3F5F1;
+      color: #13221D;
+    }
+    body.theme-pinterest-mag .site-header {
+      background: #0F2A22;
+      border-bottom: 1px solid rgba(200, 155, 84, 0.24);
+    }
+    body.theme-pinterest-mag .header-top-bar {
+      background: #0A1E18;
+      border-bottom: 1px solid rgba(246, 243, 236, 0.08);
+      color: rgba(246, 243, 236, 0.78);
+    }
+    body.theme-pinterest-mag .top-bar-contact {
+      color: rgba(246, 243, 236, 0.82);
+    }
+    body.theme-pinterest-mag .top-bar-contact:hover {
+      color: #C89B54;
+    }
+    body.theme-pinterest-mag .social-links {
+      border-right-color: rgba(246, 243, 236, 0.14);
+    }
+    body.theme-pinterest-mag .social-link {
+      background: rgba(246, 243, 236, 0.07);
+      border-color: rgba(246, 243, 236, 0.16);
+      color: #F6F3EC;
+    }
+    body.theme-pinterest-mag .social-link:hover {
+      background: #C89B54;
+      border-color: #C89B54;
+      color: #0F2A22;
+    }
+    body.theme-pinterest-mag .header-main-inner {
+      padding: 1.05rem 1.5rem;
+    }
+    body.theme-pinterest-mag .brand-link {
+      color: #F6F3EC;
+      font-size: 1.62rem;
+      letter-spacing: -0.015em;
+    }
+    body.theme-pinterest-mag .nav-links {
+      color: rgba(246, 243, 236, 0.84);
+      gap: 1.85rem;
+    }
+    body.theme-pinterest-mag .nav-links a {
+      position: relative;
+      padding: 0.25rem 0;
+    }
+    body.theme-pinterest-mag .nav-links a::after {
+      content: '';
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: -2px;
+      height: 1.5px;
+      background: #C89B54;
+      transform: scaleX(0);
+      transform-origin: left;
+      transition: transform 0.18s ease;
+    }
+    body.theme-pinterest-mag .nav-links a:hover {
+      color: #F6F3EC;
+    }
+    body.theme-pinterest-mag .nav-links a:hover::after {
+      transform: scaleX(1);
+    }
+    body.theme-pinterest-mag .header-about-link {
+      background: #C89B54;
+      color: #0F2A22;
+      font-weight: 700;
+      font-size: 0.82rem;
+      padding: 0.52rem 1.15rem;
+      border-radius: 4px;
+      letter-spacing: 0.01em;
+      transition: background 0.16s ease, transform 0.16s ease;
+    }
+    body.theme-pinterest-mag .header-about-link:hover {
+      background: #D9B06C;
+      color: #0F2A22;
+      transform: translateY(-1px);
+    }
+    body.theme-pinterest-mag .mobile-cat-strip {
+      background: #0A1E18;
+      border-top-color: rgba(246, 243, 236, 0.1);
+    }
+    body.theme-pinterest-mag .mobile-cat-strip a {
+      color: rgba(246, 243, 236, 0.85);
+    }
+    body.theme-pinterest-mag .mobile-cat-strip a:hover {
+      color: #C89B54;
+    }
+
+    /* Split Dark-Forest Magazine Cover Hero */
+    body.theme-pinterest-mag .hero-split-band {
+      background: #0F2A22;
+      border-bottom: 1px solid rgba(200, 155, 84, 0.25);
+      padding: 3.25rem 0 3.75rem;
+    }
+    body.theme-pinterest-mag .hero-split-grid {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.18fr);
+      gap: 3rem;
+      align-items: stretch;
+    }
+    body.theme-pinterest-mag .hero-split-media {
+      order: 2;
+      border-radius: 4px;
+      border: 1px solid rgba(200, 155, 84, 0.28);
+      background: #17382E;
+      aspect-ratio: 16 / 11;
+      height: 100%;
+    }
+    body.theme-pinterest-mag .hero-split-grid > div {
+      order: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+    body.theme-pinterest-mag .hero-split-band .kicker {
+      color: #C89B54;
+      letter-spacing: 0.16em;
+      margin-bottom: 0.85rem;
+    }
+    body.theme-pinterest-mag .hero-split-title {
+      color: #F6F3EC;
+      font-size: clamp(2.05rem, 3.8vw, 3.1rem);
+      line-height: 1.1;
+      text-wrap: balance;
+      margin-bottom: 1.1rem;
+    }
+    body.theme-pinterest-mag .hero-split-title a:hover {
+      color: #E2BE7F;
+    }
+    body.theme-pinterest-mag .hero-split-excerpt {
+      color: rgba(246, 243, 236, 0.82);
+      font-size: 1rem;
+      max-width: 50ch;
+    }
+    body.theme-pinterest-mag .hero-split-meta {
+      color: rgba(246, 243, 236, 0.72);
+    }
+    body.theme-pinterest-mag .hero-read-cta {
+      align-self: flex-start;
+      background: #C89B54;
+      color: #0F2A22;
+      padding: 0.78rem 1.45rem;
+      border-radius: 4px;
+      font-weight: 700;
+      margin-top: 1.5rem;
+      transition: background 0.16s ease, transform 0.16s ease;
+    }
+    body.theme-pinterest-mag .hero-read-cta:hover {
+      background: #D9B06C;
+      color: #0F2A22;
+      transform: translateY(-1px);
+    }
+
+    /* Editorial Category & Story Cards */
+    body.theme-pinterest-mag .section-title {
+      text-wrap: balance;
+    }
+    body.theme-pinterest-mag .category-card {
+      border-radius: 4px;
+      border: 1px solid #D8E0D8;
+      border-top: 2px solid #0F2A22;
+      background: #FFFFFF;
+    }
+    body.theme-pinterest-mag .category-card:hover {
+      border-color: #1B4D3E;
+      border-top-color: #C89B54;
+      box-shadow: 0 14px 28px rgba(15, 42, 34, 0.08);
+    }
+    body.theme-pinterest-mag .category-arrow-circle {
+      border-radius: 4px;
+      background: #EAEFE9;
+      color: #0F2A22;
+    }
+    body.theme-pinterest-mag .category-card:hover .category-arrow-circle {
+      background: #0F2A22;
+      color: #C89B54;
+    }
+    body.theme-pinterest-mag .post-card {
+      border-radius: 4px;
+      border: 1px solid #D8E0D8;
+      background: #FFFFFF;
+    }
+    body.theme-pinterest-mag .post-card:hover {
+      border-color: #1B4D3E;
+      box-shadow: 0 16px 32px rgba(15, 42, 34, 0.09);
+    }
+    body.theme-pinterest-mag .post-card-media {
+      aspect-ratio: 4 / 3;
+    }
+    body.theme-pinterest-mag .post-card-kicker {
+      color: #8E6526;
+      letter-spacing: 0.14em;
+    }
+    body.theme-pinterest-mag .post-card-read-strip {
+      border-top-color: #E3E9E2;
+      color: #0F2A22;
+    }
+    body.theme-pinterest-mag .post-card:hover .post-card-read-strip {
+      color: #1B4D3E;
+    }
+
+    /* Category Archive Deep-Forest Header */
+    body.theme-pinterest-mag .archive-header {
+      background: #0F2A22;
+      border-bottom: 1px solid rgba(200, 155, 84, 0.25);
+      color: #F6F3EC;
+      padding: 3.1rem 0 2.75rem;
+    }
+    body.theme-pinterest-mag .archive-header .breadcrumbs {
+      color: rgba(246, 243, 236, 0.72);
+    }
+    body.theme-pinterest-mag .archive-header .breadcrumbs a:hover {
+      color: #C89B54;
+    }
+    body.theme-pinterest-mag .archive-header .kicker {
+      color: #C89B54;
+      letter-spacing: 0.16em;
+    }
+    body.theme-pinterest-mag .archive-header h1 {
+      color: #F6F3EC;
+      text-wrap: balance;
+    }
+    body.theme-pinterest-mag .archive-header .excerpt {
+      color: rgba(246, 243, 236, 0.82);
+    }
+
+    /* Article Deep-Forest Title Banner & Asymmetric 2-Column Reading Canvas */
+    body.theme-pinterest-mag .atelier-article-banner {
+      background: #0F2A22;
+      border-bottom: 1px solid rgba(200, 155, 84, 0.25);
+      padding: 3rem 0 2.75rem;
+      color: #F6F3EC;
+    }
+    body.theme-pinterest-mag .atelier-banner-inner {
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 0 1.5rem;
+      text-align: center;
+    }
+    body.theme-pinterest-mag .atelier-article-banner .breadcrumbs {
+      justify-content: center;
+      color: rgba(246, 243, 236, 0.76);
+      margin-bottom: 1rem;
+    }
+    body.theme-pinterest-mag .atelier-article-banner .breadcrumbs a {
+      color: #C89B54;
+    }
+    body.theme-pinterest-mag .atelier-article-banner .breadcrumbs a:hover {
+      color: #E2BE7F;
+    }
+    body.theme-pinterest-mag .atelier-article-banner h1 {
+      color: #F6F3EC;
+      font-size: clamp(2rem, 4.1vw, 3.15rem);
+      line-height: 1.13;
+      text-wrap: balance;
+      margin: 0 0 1.15rem;
+    }
+    body.theme-pinterest-mag .atelier-article-banner .meta-row {
+      justify-content: center;
+      color: rgba(246, 243, 236, 0.82);
+      border-bottom: none;
+      padding-bottom: 0;
+      margin-bottom: 0;
+    }
+    body.theme-pinterest-mag .atelier-article-wrap {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 2.75rem 1.5rem 3.5rem;
+    }
+    body.theme-pinterest-mag .atelier-article-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 310px;
+      gap: 2.5rem;
+      align-items: start;
+    }
+    body.theme-pinterest-mag .atelier-main-column {
+      background: #FFFFFF;
+      border: 1px solid #D8E0D8;
+      border-radius: 4px;
+      padding: 2.25rem 2.5rem;
+    }
+    body.theme-pinterest-mag .atelier-main-column .hero-frame {
+      border-radius: 4px;
+      border-color: #D8E0D8;
+      margin-bottom: 2rem;
+    }
+    body.theme-pinterest-mag .atelier-main-column .article-body > p:first-of-type::first-letter {
+      font-family: ${theme.font_headline};
+      float: left;
+      font-size: 3.45rem;
+      line-height: 0.85;
+      padding: 0.25rem 0.65rem 0.1rem 0;
+      font-weight: 700;
+      color: #0F2A22;
+    }
+    body.theme-pinterest-mag .article-body blockquote {
+      border-left: none;
+      border-top: 1px solid #C89B54;
+      border-bottom: 1px solid #C89B54;
+      background: #F7F9F6;
+      border-radius: 0;
+      padding: 1.25rem 1.5rem;
+      font-family: ${theme.font_headline};
+      font-size: 1.16rem;
+      font-style: italic;
+      color: #0F2A22;
+    }
+    body.theme-pinterest-mag .atelier-sidebar {
+      position: sticky;
+      top: 96px;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+    body.theme-pinterest-mag .atelier-side-panel {
+      background: #FFFFFF;
+      border: 1px solid #D8E0D8;
+      border-radius: 4px;
+      padding: 1.4rem 1.5rem;
+    }
+    body.theme-pinterest-mag .atelier-side-heading {
+      font-family: ${theme.font_headline};
+      font-size: 1.2rem;
+      font-weight: 700;
+      color: #0F2A22;
+      margin: 0 0 1rem;
+      padding-bottom: 0.65rem;
+      border-bottom: 1px solid #E3E9E2;
+    }
+    body.theme-pinterest-mag .atelier-toc-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+    }
+    body.theme-pinterest-mag .atelier-toc-list li {
+      border-bottom: 1px solid #EDF1EC;
+    }
+    body.theme-pinterest-mag .atelier-toc-list li:last-child {
+      border-bottom: none;
+    }
+    body.theme-pinterest-mag .atelier-toc-link {
+      display: flex;
+      align-items: baseline;
+      gap: 0.65rem;
+      padding: 0.62rem 0;
+      font-size: 0.88rem;
+      line-height: 1.4;
+      color: #13221D;
+      transition: color 0.16s ease;
+    }
+    body.theme-pinterest-mag .atelier-toc-link:hover {
+      color: #1B4D3E;
+    }
+    body.theme-pinterest-mag .atelier-toc-num {
+      font-variant-numeric: tabular-nums;
+      font-weight: 700;
+      color: #9A6F2B;
+      flex-shrink: 0;
+    }
+    body.theme-pinterest-mag .atelier-mini-list {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+    body.theme-pinterest-mag .atelier-mini-card {
+      display: grid;
+      grid-template-columns: 76px minmax(0, 1fr);
+      gap: 0.85rem;
+      align-items: center;
+    }
+    body.theme-pinterest-mag .atelier-mini-thumb {
+      width: 76px;
+      height: 60px;
+      border-radius: 3px;
+      overflow: hidden;
+      background: #EAEFE9;
+      border: 1px solid #D8E0D8;
+    }
+    body.theme-pinterest-mag .atelier-mini-thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    body.theme-pinterest-mag .atelier-mini-title {
+      font-family: ${theme.font_headline};
+      font-size: 0.92rem;
+      font-weight: 700;
+      line-height: 1.3;
+      color: #13221D;
+      margin: 0;
+    }
+    body.theme-pinterest-mag .atelier-mini-card:hover .atelier-mini-title {
+      color: #1B4D3E;
+    }
+    @media (max-width: 980px) {
+      body.theme-pinterest-mag .atelier-article-grid {
+        grid-template-columns: 1fr;
+      }
+      body.theme-pinterest-mag .atelier-sidebar {
+        position: static;
+      }
+      body.theme-pinterest-mag .atelier-main-column {
+        padding: 1.5rem;
+      }
+      body.theme-pinterest-mag .hero-split-grid {
+        grid-template-columns: 1fr;
+      }
+      body.theme-pinterest-mag .hero-split-media {
+        order: 1;
+      }
+      body.theme-pinterest-mag .hero-split-grid > div {
+        order: 2;
+      }
+    }
+
+    /* Dark-Forest Editorial Newsletter Card */
+    body.theme-pinterest-mag .newsletter-band {
+      background: #EAEFE9;
+      border-top: 1px solid #D8E0D8;
+      padding: 3.75rem 0;
+    }
+    body.theme-pinterest-mag .newsletter-box {
+      max-width: 760px;
+      background: #0F2A22;
+      color: #F6F3EC;
+      padding: 2.75rem 2.25rem;
+      border-radius: 4px;
+      border: 1px solid rgba(200, 155, 84, 0.3);
+    }
+    body.theme-pinterest-mag .newsletter-box .kicker {
+      color: #C89B54;
+      letter-spacing: 0.16em;
+    }
+    body.theme-pinterest-mag .newsletter-title {
+      color: #F6F3EC;
+    }
+    body.theme-pinterest-mag .newsletter-copy {
+      color: rgba(246, 243, 236, 0.82);
+    }
+    body.theme-pinterest-mag .newsletter-form input[type="email"] {
+      background: #FFFFFF;
+      border-color: rgba(246, 243, 236, 0.25);
+      border-radius: 4px;
+      color: #13221D;
+    }
+    body.theme-pinterest-mag .newsletter-form .btn-solid {
+      background: #C89B54;
+      color: #0F2A22;
+      border-radius: 4px;
+      font-weight: 700;
+    }
+    body.theme-pinterest-mag .newsletter-form .btn-solid:hover {
+      background: #D9B06C;
+    }
+    body.theme-pinterest-mag .newsletter-box .form-feedback {
+      color: #E2BE7F;
+    }
+
+    /* Deep-Forest Editorial Footer */
+    body.theme-pinterest-mag .site-footer {
+      background: #0F2A22;
+      border-top: 1px solid rgba(200, 155, 84, 0.25);
+      color: rgba(246, 243, 236, 0.78);
+    }
+    body.theme-pinterest-mag .footer-grid {
+      border-bottom-color: rgba(246, 243, 236, 0.14);
+    }
+    body.theme-pinterest-mag .footer-brand-name {
+      color: #F6F3EC;
+    }
+    body.theme-pinterest-mag .footer-col-title {
+      color: #C89B54;
+    }
+    body.theme-pinterest-mag .footer-link-list a {
+      color: rgba(246, 243, 236, 0.84);
+    }
+    body.theme-pinterest-mag .footer-link-list a:hover {
+      color: #C89B54;
+    }
+    body.theme-pinterest-mag .footer-social-link {
+      background: rgba(246, 243, 236, 0.08);
+      border-color: rgba(246, 243, 236, 0.18);
+      color: #F6F3EC;
+      border-radius: 4px;
+    }
+    body.theme-pinterest-mag .footer-social-link:hover {
+      border-color: #C89B54;
+      color: #C89B54;
+    }
+    body.theme-pinterest-mag .footer-bottom a:hover {
+      color: #C89B54;
+    }`
+        : ''
+    }
   </style>`;
 }
 
@@ -1307,6 +1895,14 @@ export function renderPostHtml(params: {
     lcpPreloadSrc = promoted.lcpSrc || imgSrc;
   }
 
+  const isAtelier = theme.id === 'pinterest-mag';
+  let tocHeadings: Array<{ id: string; text: string; num: string }> = [];
+  if (isAtelier && finalContentHtml) {
+    const tocRes = extractArticleTocAndAnchors(finalContentHtml);
+    finalContentHtml = tocRes.html;
+    tocHeadings = tocRes.headings;
+  }
+
   const bodyHtml = finalContentHtml
     ? `<section class="article-body">${finalContentHtml}</section>`
     : post.excerpt
@@ -1354,10 +1950,90 @@ export function renderPostHtml(params: {
   const breadcrumbItems: string[] = [`<a href="/">Home</a>`];
   if (post.category && post.category_slug) {
     breadcrumbItems.push(
-      `<span class="breadcrumbs-sep">/</span><a href="/${escapeHtml(post.category_slug)}/">${escapeHtml(post.category)}</a>`
+      `<span class="breadcrumbs-sep">${isAtelier ? '&middot;' : '/'}</span><a href="/${escapeHtml(post.category_slug)}/">${escapeHtml(post.category)}</a>`
     );
   }
-  breadcrumbItems.push(`<span class="breadcrumbs-sep">/</span><span>${escapeHtml(post.title)}</span>`);
+  breadcrumbItems.push(`<span class="breadcrumbs-sep">${isAtelier ? '&middot;' : '/'}</span><span>${escapeHtml(post.title)}</span>`);
+
+  // Estimate reading time cleanly for Botanical Atelier banner
+  const wordCount = (finalContentHtml || post.excerpt || '')
+    .replace(/<[^>]+>/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean).length;
+  const readMins = Math.max(2, Math.round(wordCount / 220));
+
+  const atelierSidebarTocItems =
+    tocHeadings.length > 0
+      ? tocHeadings
+          .map(
+            (h) =>
+              `<li><a class="atelier-toc-link" href="#${escapeHtml(h.id)}"><span class="atelier-toc-num">${h.num}.</span><span>${escapeHtml(h.text)}</span></a></li>`
+          )
+          .join('')
+      : [
+          ...(post.takeaways.length ? ['<li><a class="atelier-toc-link" href="#takeaways"><span class="atelier-toc-num">01.</span><span>Key Takeaways</span></a></li>'] : []),
+          ...(post.checklist.length ? [`<li><a class="atelier-toc-link" href="#checklist"><span class="atelier-toc-num">${post.takeaways.length ? '02.' : '01.'}</span><span>Design Checklist</span></a></li>`] : []),
+          `<li><a class="atelier-toc-link" href="/${escapeHtml(post.category_slug || '')}/"><span class="atelier-toc-num">&rarr;</span><span>More in ${escapeHtml(post.category || 'Journal')}</span></a></li>`,
+        ].join('');
+
+  const atelierSidebarRelated = related.length
+    ? `<div class="atelier-side-panel">
+        <h2 class="atelier-side-heading">Curated Reading</h2>
+        <div class="atelier-mini-list">
+          ${related
+            .slice(0, 3)
+            .map((rel) => {
+              const relRoute = resolvePostRoute(rel, routingMode);
+              const relHasImg = Boolean((rel.local_image_path || rel.image_url || '').trim());
+              const relImg = relHasImg ? resolveImageSrc(rel, theme.accent) : '';
+              return `<a class="atelier-mini-card" href="${escapeHtml(relRoute.web_path)}">
+                ${relImg ? `<div class="atelier-mini-thumb"><img src="${escapeHtml(relImg)}" alt="${escapeHtml(rel.title)}" width="152" height="120" loading="lazy" decoding="async" /></div>` : '<div class="atelier-mini-thumb"></div>'}
+                <h3 class="atelier-mini-title">${escapeHtml(rel.title)}</h3>
+              </a>`;
+            })
+            .join('')}
+        </div>
+      </div>`
+    : '';
+
+  const atelierMetaParts = [...metaParts, `<span>${readMins} min read</span>`];
+
+  const mainArticleMarkup = isAtelier
+    ? `<section class="atelier-article-banner">
+        <div class="atelier-banner-inner">
+          <nav class="breadcrumbs" aria-label="Breadcrumb">${breadcrumbItems.join('')}</nav>
+          <h1>${escapeHtml(post.title)}</h1>
+          <div class="meta-row">${atelierMetaParts.join(' &middot; ')}</div>
+        </div>
+      </section>
+      <div class="atelier-article-wrap">
+        <div class="atelier-article-grid">
+          <article class="atelier-main-column">
+            ${heroHtml}
+            ${bodyHtml}
+            ${takeawaysHtml}
+            ${checklistHtml}
+          </article>
+          <aside class="atelier-sidebar" aria-label="Article Navigation">
+            <div class="atelier-side-panel">
+              <h2 class="atelier-side-heading">In This Guide</h2>
+              <ol class="atelier-toc-list">${atelierSidebarTocItems}</ol>
+            </div>
+            ${atelierSidebarRelated}
+          </aside>
+        </div>
+      </div>`
+    : `<article class="article-container">
+        <nav class="breadcrumbs" aria-label="Breadcrumb">${breadcrumbItems.join('')}</nav>
+        ${post.category ? `<span class="kicker">${escapeHtml(post.category)}</span>` : ''}
+        <h1>${escapeHtml(post.title)}</h1>
+        ${metaRowHtml}
+        ${heroHtml}
+        ${bodyHtml}
+        ${takeawaysHtml}
+        ${checklistHtml}
+      </article>`;
 
   const jsonLdObj: Record<string, unknown> = {
     '@context': 'https://schema.org',
@@ -1382,23 +2058,14 @@ export function renderPostHtml(params: {
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>${escapeHtml(post.title)} &mdash; ${escapeHtml(identity.siteName)}</title>
   <meta name="description" content="${escapeHtml(post.excerpt || post.title)}" />
-  <link rel="canonical" href="${escapeHtml(canonical)}" />
+  <link rel="canonical" href="${escapeHtml(canonical)}" />${renderCustomHeadCode(branding.custom_head_code)}
   <script type="application/ld+json">${JSON.stringify(jsonLdObj).replace(/</g, '\\u003c')}</script>
   ${renderBaseStyles(theme, lcpPreloadSrc)}
 </head>
-<body>
+<body class="theme-${escapeHtml(theme.id)}">
   ${renderHeader(branding, categories, identity)}
   <main>
-    <article class="article-container">
-      <nav class="breadcrumbs" aria-label="Breadcrumb">${breadcrumbItems.join('')}</nav>
-      ${post.category ? `<span class="kicker">${escapeHtml(post.category)}</span>` : ''}
-      <h1>${escapeHtml(post.title)}</h1>
-      ${metaRowHtml}
-      ${heroHtml}
-      ${bodyHtml}
-      ${takeawaysHtml}
-      ${checklistHtml}
-    </article>
+    ${mainArticleMarkup}
     ${relatedHtml}
   </main>
   ${renderFooter(branding, categories, identity)}
@@ -1471,10 +2138,10 @@ export function renderHubHtml(params: {
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>${escapeHtml(pageTitle)}</title>
-  <meta name="description" content="${escapeHtml(pageDesc)}" />
+  <meta name="description" content="${escapeHtml(pageDesc)}" />${renderCustomHeadCode(branding.custom_head_code)}
   ${renderBaseStyles(theme, firstCardImg)}
 </head>
-<body>
+<body class="theme-${escapeHtml(theme.id)}">
   ${renderHeader(branding, categories, identity)}
   <main>
     <section class="archive-header">
@@ -1626,10 +2293,10 @@ export function renderHubHtml(params: {
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>${escapeHtml(pageTitle)}</title>
   <meta name="description" content="${escapeHtml(pageDesc)}" />
-  <link rel="canonical" href="${escapeHtml(identity.siteUrl)}/" />
+  <link rel="canonical" href="${escapeHtml(identity.siteUrl)}/" />${renderCustomHeadCode(branding.custom_head_code)}
   ${renderBaseStyles(theme, leadImg)}
 </head>
-<body>
+<body class="theme-${escapeHtml(theme.id)}">
   ${renderHeader(branding, categories, identity)}
   <main>
     ${heroSectionHtml}
@@ -1693,10 +2360,10 @@ export function renderStaticPageHtml(params: {
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>${escapeHtml(page.title)} &mdash; ${escapeHtml(identity.siteName)}</title>
   <meta name="description" content="${escapeHtml(page.description)}" />
-  <link rel="canonical" href="${escapeHtml(canonical)}" />
+  <link rel="canonical" href="${escapeHtml(canonical)}" />${renderCustomHeadCode(branding.custom_head_code)}
   ${renderBaseStyles(theme)}
 </head>
-<body>
+<body class="theme-${escapeHtml(theme.id)}">
   ${renderHeader(branding, categories, identity)}
   <main>
     <article class="article-container">
@@ -1751,14 +2418,21 @@ export function getSamplePostForTheme(themeKey: string): PostItem {
   }
   if (themeKey === 'pinterest-mag' || themeKey === 'styleire') {
     return {
-      slug: '16-coastal-bedroom-decor-essentials-transform-your-space',
-      title: '16 Coastal Bedroom Decor Essentials: Transform Your Beach House Space',
+      slug: '12-botanical-sanctuary-interiors-sunlit-spaces',
+      title: '12 Botanical Sanctuary Interiors & Sunlit Coffee Bar Ideas',
       excerpt:
-        'A visual pin discovery magazine layout with coastal neutral palettes, natural woven textures, and curated styling checklists.',
-      content_html: '',
-      category: 'Coastal Decor',
-      category_slug: 'coastal-decor',
-      parent_slug: 'bedroom-ideas',
+        'A distinctive deep-forest and champagne-gold editorial magazine theme pairing Fraunces display typography, a split magazine cover hero, and an asymmetric reading layout with a sticky guide index.',
+      content_html:
+        '<p>Transforming an everyday room into a calm botanical sanctuary starts with grounded architectural tones, tactile oak cabinetry, and generous daylight balanced by warm brass fixtures.</p>' +
+        '<h2>Optimize Vertical Shelving with Olive &amp; Brass</h2>' +
+        '<p>Deep olive-green millwork paired with honed marble counters and unlacquered brass pulls instantly elevates compact kitchen nooks without crowding the floor plan.</p>' +
+        '<h2>Layer Natural Linen &amp; Architectural Foliage</h2>' +
+        '<p>Anchor sunlit seating areas with sculptural indoor ficus trees, woven wool rugs, and soft sage-alabaster walls that gently diffuse afternoon glare.</p>' +
+        '<h2>Balance Warm 2700K Lighting Across Zones</h2>' +
+        '<p>Combine recessed overhead task lights with dimmable brass wall sconces so evening spaces transition effortlessly from functional prep zones to serene retreats.</p>',
+      category: 'Botanical Living',
+      category_slug: 'botanical-living',
+      parent_slug: 'home-decor',
       date: '2026-10-16',
       modified: '2026-10-16',
       image_url: '',
@@ -1767,18 +2441,18 @@ export function getSamplePostForTheme(themeKey: string): PostItem {
       image_height: 750,
       custom_edited: false,
       takeaways: [
-        'Coastal Palette: Sandy neutrals, seafoam whites, and driftwood greys create effortless serenity.',
-        'Natural Fibre Textiles: Jute rugs, washed linen throws, and rattan accents warm the room.',
-        'Editorial Layering: Oversized mirrors and textured cushion trios amplify natural light.',
+        'Deep Forest & Brass Contrast: Pairing #0F2A22 millwork with warm champagne brass creates timeless architectural depth.',
+        'Soft Mist Alabaster Walls: Subtle sage-tinted neutrals keep rooms airy while harmonizing with natural foliage.',
+        'Structured Editorial Rhythm: Generous whitespace and numbered section anchors make long-form guides effortless to scan.',
       ],
       checklist: [
-        { id: 'step-1', text: 'Anchor the room with a hand-loomed jute or seagrass rug' },
-        { id: 'step-2', text: 'Layer linen, cotton slub, and embroidered throw cushions' },
-        { id: 'step-3', text: 'Mount an arched mirror opposite the primary window' },
-        { id: 'step-4', text: 'Style open shelving with stoneware and whitewashed frames' },
+        { id: 'step-1', text: 'Sample deep forest or olive paint swatches in both morning and evening light' },
+        { id: 'step-2', text: 'Pair honed stone counters with brushed champagne-brass cabinet pulls' },
+        { id: 'step-3', text: 'Add two tall sculptural indoor plants near primary natural light sources' },
+        { id: 'step-4', text: 'Install dimmable 2700K warm sconces for soft evening ambiance' },
       ],
       domain: 'stylesdays.com',
-      raw_meta: {},
+      raw_meta: { author: 'Olivia Sterling' },
     };
   }
   return {

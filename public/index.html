@@ -162,7 +162,7 @@
                 <select id="quickDeployThemeSelect" class="form-control" style="width: auto; padding: 0.2rem 0.6rem; font-size: 0.75rem; height: auto; background: #0F172A; border: 1px solid #38BDF8; color: #38BDF8; font-weight: 600; border-radius: 4px; cursor: pointer;">
                   <option value="editorial-warm">Kinfolk Journal (Editorial Warm)</option>
                   <option value="nordic-studio">The Nordroom (Nordic Studio)</option>
-                  <option value="pinterest-mag">Styleire Magazine (Editorial pSEO)</option>
+                  <option value="pinterest-mag">Botanical Atelier (Forest &amp; Gold)</option>
                 </select>
               </div>
 
@@ -338,6 +338,18 @@
           </div>
         </div>
 
+        <!-- Step 2 Sub-Navigation: Models & Design | Header Code (<head>) -->
+        <div class="models-subtab-bar" role="tablist" aria-label="Models Section Tabs">
+          <button type="button" id="modelsSubtabDesign" class="models-subtab-btn active" role="tab" aria-selected="true" data-subpanel="modelsSubpanelDesign">
+            <span>Models, Routing &amp; Branding</span>
+          </button>
+          <button type="button" id="modelsSubtabHeadCode" class="models-subtab-btn" role="tab" aria-selected="false" data-subpanel="modelsSubpanelHeadCode">
+            <span>&lt;/&gt; Header Code (&lt;head&gt;)</span>
+            <span id="headCodeStatusTag" class="models-subtab-meta">Empty</span>
+          </button>
+        </div>
+
+        <div id="modelsSubpanelDesign" class="models-subpanel active" role="tabpanel">
         <!-- 3 Curated Visual Theme Models (Compact Gallery) -->
         <div class="card compact-card" style="margin-bottom: 0.85rem;">
           <div class="card-compact-header">
@@ -395,22 +407,22 @@
             <!-- Model 3 -->
             <div class="theme-card" data-theme="pinterest-mag">
               <div class="theme-card-header">
-                <span class="theme-badge" style="background: rgba(15, 23, 42, 0.15); color: #38BDF8; border: 1px solid rgba(56, 189, 248, 0.3);">
-                  Model 3 · Styleire Magazine
+                <span class="theme-badge" style="background: rgba(15, 42, 34, 0.75); color: #E2BE7F; border: 1px solid rgba(200, 155, 84, 0.45);">
+                  Model 3 · Botanical Atelier
                 </span>
                 <button type="button" class="btn-preview-theme" data-theme="pinterest-mag" title="Preview">👁️ Preview</button>
               </div>
-              <div class="theme-card-mockup" style="background: #FFFFFF; color: #09090B; border-color: #E4E4E7; padding: 0.45rem;">
-                <div style="font-family: 'Playfair Display', serif; font-size: 0.72rem; font-weight: 700;">Styleire Editorial</div>
-                <div style="font-size: 0.58rem; color: #71717A;">78-page pSEO architecture &bull; E-E-A-T suite</div>
+              <div class="theme-card-mockup" style="background: linear-gradient(135deg, #0F2A22 0%, #173B30 62%, #F3F5F1 62%, #F3F5F1 100%); color: #F6F3EC; border-color: rgba(200, 155, 84, 0.45); padding: 0.45rem;">
+                <div style="font-family: 'Fraunces', Georgia, serif; font-size: 0.74rem; font-weight: 700; color: #F6F3EC;">Botanical Forest &amp; Gold</div>
+                <div style="font-size: 0.58rem; color: #E2BE7F;">Deep emerald hero &bull; Sage canvas &bull; Sticky guide</div>
               </div>
               <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.2rem;">
                 <div class="theme-swatches">
-                  <span class="swatch" style="background: #FFFFFF; border: 1px solid #E4E4E7;"></span>
-                  <span class="swatch" style="background: #09090B;"></span>
-                  <span class="swatch" style="background: #71717A;"></span>
+                  <span class="swatch" style="background: #0F2A22; border: 1px solid rgba(200, 155, 84, 0.5);"></span>
+                  <span class="swatch" style="background: #C89B54;"></span>
+                  <span class="swatch" style="background: #F3F5F1; border: 1px solid #D8E0D8;"></span>
                 </div>
-                <span style="font-size: 0.68rem; color: #94A3B8; font-family: var(--font-mono);">Styleire Serif</span>
+                <span style="font-size: 0.68rem; color: #C89B54; font-family: Georgia, serif; font-weight: 700;">Fraunces</span>
               </div>
             </div>
           </div>
@@ -418,7 +430,7 @@
           <select id="cfgTheme" class="form-control" style="display: none;">
             <option value="editorial-warm">Editorial Warm</option>
             <option value="nordic-studio">Nordic Studio</option>
-            <option value="pinterest-mag">Pinterest Mag</option>
+            <option value="pinterest-mag">Botanical Atelier</option>
           </select>
         </div>
 
@@ -589,6 +601,64 @@
               ✨ Tip: Custom social links dynamically update across the masthead, footer chips, and bylines.
             </div>
             <button type="submit" class="btn btn-primary btn-sm" id="btnSaveSocialLinks">💾 Save Social &amp; Theme Settings</button>
+          </div>
+        </div>
+        </div>
+
+        <!-- Sub-Tab 2: Custom <head> JavaScript, Analytics & Verification Code -->
+        <div id="modelsSubpanelHeadCode" class="models-subpanel" role="tabpanel">
+          <div class="card compact-card head-code-card">
+            <div class="card-compact-header" style="margin-bottom: 0.65rem;">
+              <span class="tag-badge" style="background: rgba(16, 185, 129, 0.15); color: #34D399; border: 1px solid rgba(16, 185, 129, 0.3);">
+                CUSTOM &lt;HEAD&gt; CODE &amp; ANALYTICS SCRIPTS
+              </span>
+              <span style="font-size: 0.72rem; color: #94A3B8;">Injected inside &lt;head&gt;...&lt;/head&gt; on every page (Home, Posts, Categories &amp; Legal pages)</span>
+            </div>
+
+            <p style="font-size: 0.78rem; color: #CBD5E1; margin: 0 0 0.75rem; line-height: 1.55;">
+              Paste your Google Analytics (GA4), Google Search Console meta tag, AdSense, Meta Pixel, Pinterest verification, or any custom JavaScript snippet below. It is saved per project and injected right at the <strong>top of <code>&lt;head&gt;</code></strong> (immediately after <code>&lt;link rel="canonical"&gt;</code>, before <code>&lt;style&gt;</code>) on your homepage and every page.
+            </p>
+
+            <div class="head-code-snippets" role="group" aria-label="Insert starter snippet">
+              <span class="head-code-snippets-label">Quick Insert:</span>
+              <button type="button" class="btn btn-secondary btn-xs head-snippet-btn" data-snippet="ga4">+ Google Analytics (GA4)</button>
+              <button type="button" class="btn btn-secondary btn-xs head-snippet-btn" data-snippet="gsc">+ Search Console Meta</button>
+              <button type="button" class="btn btn-secondary btn-xs head-snippet-btn" data-snippet="pinterest">+ Pinterest Verify</button>
+              <button type="button" class="btn btn-secondary btn-xs head-snippet-btn" data-snippet="custom_js">+ Custom Script</button>
+              <button type="button" id="btnClearHeadCode" class="btn btn-secondary btn-xs" style="margin-left: auto; color: #FCA5A5;">Clear</button>
+            </div>
+
+            <div class="form-group compact-group" style="margin-top: 0.6rem;">
+              <label class="form-label" for="cfgCustomHeadCode" style="display: flex; justify-content: space-between; align-items: center;">
+                <span>Code injected inside <code>&lt;head&gt;</code></span>
+                <span id="headCodeMetrics" style="font-size: 0.7rem; color: #94A3B8; font-family: var(--font-mono);">0 lines · 0 chars</span>
+              </label>
+              <textarea
+                id="cfgCustomHeadCode"
+                class="form-control head-code-textarea"
+                rows="10"
+                spellcheck="false"
+                placeholder="<!-- Example: Google Analytics (GA4) -->&#10;&lt;script async src=&quot;https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX&quot;&gt;&lt;/script&gt;&#10;&lt;script&gt;&#10;  window.dataLayer = window.dataLayer || [];&#10;  function gtag(){dataLayer.push(arguments);}&#10;  gtag('js', new Date());&#10;  gtag('config', 'G-XXXXXXXXXX');&#10;&lt;/script&gt;"
+              ></textarea>
+            </div>
+
+            <div style="margin-top: 0.85rem; display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap;">
+              <div style="font-size: 0.72rem; color: #94A3B8;">
+                After saving, deploy in <strong>Step 4</strong> to update your live site&apos;s HTML <code>&lt;head&gt;</code>.
+              </div>
+              <div style="display: flex; align-items: center; gap: 0.5rem;">
+                <button type="button" id="btnSaveHeadCode" class="btn btn-primary btn-sm">💾 Save Header Code</button>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="switchTab('tab-deploy')">Deploy in Step 4 →</button>
+              </div>
+            </div>
+
+            <div class="head-output-inspector" style="margin-top: 0.9rem;">
+              <div class="head-output-inspector-bar">
+                <span style="font-size: 0.72rem; font-weight: 600; color: #E2E8F0;">Live Homepage <code>&lt;head&gt;</code> Output Preview</span>
+                <span id="headOutputVerifyBadge" style="font-size: 0.68rem; font-family: var(--font-mono); color: #94A3B8;">Checking...</span>
+              </div>
+              <pre id="headOutputPreview" class="head-output-preview">Loading homepage &lt;head&gt; preview...</pre>
+            </div>
           </div>
         </div>
       </form>
@@ -889,9 +959,9 @@
               </button>
               <button type="button" class="model-preview-btn compact-model-btn" id="modelBtn3"
                 data-theme="pinterest-mag"
-                data-title="16 Coastal Bedroom Decor Essentials: Transform Your Beach House Space"
-                data-excerpt="A high-fashion visual pin discovery magazine with floating Save to Pinterest badge and 2-column moodboard pin cards.">
-                <span>📌 Model 3: Pinterest Mag</span>
+                data-title="12 Botanical Sanctuary Interiors &amp; Sunlit Coffee Bar Ideas"
+                data-excerpt="Deep botanical forest header &amp; split magazine hero paired with champagne gold CTAs, mist sage reading canvas, and a sticky numbered guide sidebar.">
+                <span>🌿 Model 3: Botanical Atelier</span>
               </button>
             </div>
           </div>
@@ -914,7 +984,7 @@
               <select id="previewThemeSelect" class="form-control">
                 <option value="editorial-warm">Editorial Warm</option>
                 <option value="nordic-studio">Nordic Studio</option>
-                <option value="pinterest-mag">Pinterest Mag</option>
+                <option value="pinterest-mag">Botanical Atelier</option>
               </select>
             </div>
             <div class="form-group compact-group">
