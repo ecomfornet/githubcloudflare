@@ -1153,6 +1153,74 @@ test('fetchLiveWorkerPosts imports all live posts from deployed Cloudflare Worke
   }
 });
 
+test('security & stability audit: blocks IPv4-mapped IPv6 & private worker URLs, sanitizes SVG logos, escapes JSON-LD, confines clearProject, and handles bare custom domains', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pseo-audit-hardening-test-'));
+  try {
+    // 1. Hex IPv4-mapped IPv6 normalized by Node URL parser must be blocked
+    assert.throws(() => assertSafePublicUrl('http://[::ffff:127.0.0.1]/admin'), /Blocked/);
+    assert.throws(() => assertSafePublicUrl('http://[::ffff:169.254.169.254]/latest/meta-data/'), /Blocked/);
+
+    const store = new DashboardStore({ workspaceDir: tmpDir });
+    await store.executeIngestion({ sourceType: 'sitemap', urlOrList: '' });
+
+    // 2. fetchLiveWorkerPosts blocks private/internal worker URL overrides
+    await assert.rejects(
+      () => store.fetchLiveWorkerPosts({ workerUrl: 'http://127.0.0.1:8080' }),
+      /Blocked/
+    );
+
+    // 3. uploadLogo rejects unsupported MIME types and strips <script>/onload from SVG uploads
+    assert.throws(
+      () => store.uploadLogo({ data: 'data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==' }),
+      /Unsupported logo image format/
+    );
+    const maliciousSvg = '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"><script>alert(2)</script><rect width="10" height="10"/></svg>';
+    const svgRes = store.uploadLogo({
+      data: `data:image/svg+xml;base64,${Buffer.from(maliciousSvg).toString('base64')}`,
+    });
+    assert.equal(svgRes.success, true);
+    const savedSvg = fs.readFileSync(path.join(tmpDir, 'assets', 'images', 'custom-logo.svg'), 'utf-8');
+    assert.equal(/<script/i.test(savedSvg), false);
+    assert.equal(/onload=/i.test(savedSvg), false);
+    assert.match(savedSvg, /<rect/);
+
+    // 4. JSON-LD escapes </script> and newsletter form handles apostrophes safely via data-feedback
+    store.updateConfig({
+      branding: { brand_name: "O'Connor Home & Garden" },
+      cloudflare: { project_name: 'gardenhome', custom_domain: 'gardenhome', account_subdomain: 'demoacct' },
+    });
+    const firstSlug = store.listPosts()[0].slug;
+    store.updatePost(firstSlug, {
+      title: 'Test Title </script><script>alert(1)</script>',
+      content_html: '<p>Safe body.</p>',
+    });
+    const postHtml = store.renderPreview({ slug: firstSlug, theme: 'editorial-warm' });
+    assert.equal(postHtml.includes('</script><script>alert(1)'), false);
+    assert.match(postHtml, /\\u003c\/script>/);
+
+    // 5. Bare custom domain without TLD ('gardenhome') falls back to valid workers.dev URL in sitemap.xml
+    const buildRes = store.runBuild({ clean: true, targetCloud: 'cloudflare', theme: 'editorial-warm' });
+    assert.equal(buildRes.success, true);
+    const outDir = String(buildRes.output_dir);
+    const sitemapXml = fs.readFileSync(path.join(outDir, 'sitemap.xml'), 'utf-8');
+    assert.match(sitemapXml, /https:\/\/gardenhome\.demoacct\.workers\.dev\//);
+    assert.equal(sitemapXml.includes('https://gardenhome/'), false);
+    const hubHtml = fs.readFileSync(path.join(outDir, 'index.html'), 'utf-8');
+    assert.match(hubHtml, /data-feedback="Thanks for subscribing to/);
+    assert.match(hubHtml, /this\.dataset\.feedback/);
+
+    // 6. clearActiveProjectData cannot traverse outside scraped_data even if passed '..'
+    const outsideMarker = path.join(tmpDir, 'do-not-delete.txt');
+    fs.writeFileSync(outsideMarker, 'keep', 'utf-8');
+    const clearRes = store.clearActiveProjectData('../../outside');
+    assert.equal(clearRes.success, true);
+    assert.equal(fs.existsSync(outsideMarker), true);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+
 
 
 

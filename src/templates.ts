@@ -1383,7 +1383,7 @@ export function renderPostHtml(params: {
   <title>${escapeHtml(post.title)} &mdash; ${escapeHtml(identity.siteName)}</title>
   <meta name="description" content="${escapeHtml(post.excerpt || post.title)}" />
   <link rel="canonical" href="${escapeHtml(canonical)}" />
-  <script type="application/ld+json">${JSON.stringify(jsonLdObj)}</script>
+  <script type="application/ld+json">${JSON.stringify(jsonLdObj).replace(/</g, '\\u003c')}</script>
   ${renderBaseStyles(theme, lcpPreloadSrc)}
 </head>
 <body>
@@ -1610,7 +1610,7 @@ export function renderHubHtml(params: {
         <span class="kicker">Newsletter</span>
         <h2 class="newsletter-title">Practical design advice, straight to your inbox</h2>
         <p class="newsletter-copy">Get new guides, room ideas, and curated inspiration from ${escapeHtml(identity.siteName)} &mdash; no spam, unsubscribe anytime.</p>
-        <form class="newsletter-form" onsubmit="event.preventDefault(); this.nextElementSibling.textContent='Thanks for subscribing to ${escapeHtml(identity.siteName)}!'; this.reset();">
+        <form class="newsletter-form" data-feedback="Thanks for subscribing to ${escapeHtml(identity.siteName)}!" onsubmit="event.preventDefault(); this.nextElementSibling.textContent=this.dataset.feedback; this.reset();">
           <input type="email" required placeholder="Enter your email address" aria-label="Email address" />
           <button type="submit" class="btn-solid">Subscribe</button>
         </form>

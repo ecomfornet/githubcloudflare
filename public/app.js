@@ -2393,7 +2393,7 @@
           DOM.step1OrgStatusFeedback.style.display = 'block';
           DOM.step1OrgStatusFeedback.style.background = 'rgba(59, 130, 246, 0.15)';
           DOM.step1OrgStatusFeedback.style.color = '#93C5FD';
-          DOM.step1OrgStatusFeedback.innerHTML = `Checking status of organization <strong>${orgName}</strong> on GitHub...`;
+          DOM.step1OrgStatusFeedback.innerHTML = `Checking status of organization <strong>${escapeHtml(orgName)}</strong> on GitHub...`;
         }
         try {
           const res = await api('/api/github/check-org', 'POST', { org: orgName, token: token });
@@ -2401,18 +2401,21 @@
             if (DOM.step1OrgStatusFeedback) {
               DOM.step1OrgStatusFeedback.style.background = 'rgba(16, 185, 129, 0.18)';
               DOM.step1OrgStatusFeedback.style.color = '#34D399';
-              DOM.step1OrgStatusFeedback.innerHTML = `✅ <strong>${res.message}</strong><br><small>Plan: ${res.details?.plan || 'Free'} | Verified repository container ready.</small>`;
+              DOM.step1OrgStatusFeedback.innerHTML = `✅ <strong>${escapeHtml(res.message || '')}</strong><br><small>Plan: ${escapeHtml(res.details?.plan || 'Free')} | Verified repository container ready.</small>`;
             }
             showToast(`Organization '${orgName}' is ready!`, 'success');
           } else {
             if (DOM.step1OrgStatusFeedback) {
               DOM.step1OrgStatusFeedback.style.background = 'rgba(245, 158, 11, 0.18)';
               DOM.step1OrgStatusFeedback.style.color = '#FCD34D';
-              DOM.step1OrgStatusFeedback.innerHTML = `⚠️ <strong>${res.message}</strong><br><small style="color:#E2E8F0;">${res.api_limitation || ''}</small>`;
+              DOM.step1OrgStatusFeedback.innerHTML = `⚠️ <strong>${escapeHtml(res.message || '')}</strong><br><small style="color:#E2E8F0;">${escapeHtml(res.api_limitation || '')}</small>`;
             }
             if (DOM.linkStep1OpenGithubOrg) {
               DOM.linkStep1OpenGithubOrg.style.display = 'inline-flex';
-              DOM.linkStep1OpenGithubOrg.href = res.create_web_url || 'https://github.com/account/organizations/new?plan=free';
+              const safeCreateUrl = /^https:\/\//i.test(String(res.create_web_url || ''))
+                ? res.create_web_url
+                : 'https://github.com/account/organizations/new?plan=free';
+              DOM.linkStep1OpenGithubOrg.href = safeCreateUrl;
             }
             showToast(`Organization '${orgName}' needs to be created on GitHub.`, 'warning');
           }
@@ -2420,7 +2423,7 @@
           if (DOM.step1OrgStatusFeedback) {
             DOM.step1OrgStatusFeedback.style.background = 'rgba(239, 68, 68, 0.18)';
             DOM.step1OrgStatusFeedback.style.color = '#FCA5A5';
-            DOM.step1OrgStatusFeedback.innerHTML = `❌ Error: ${err.message}`;
+            DOM.step1OrgStatusFeedback.innerHTML = `❌ Error: ${escapeHtml(err.message || String(err))}`;
           }
         } finally {
           DOM.btnStep1CheckOrg.disabled = false;
@@ -2445,7 +2448,7 @@
           DOM.step1OrgStatusFeedback.style.display = 'block';
           DOM.step1OrgStatusFeedback.style.background = 'rgba(59, 130, 246, 0.15)';
           DOM.step1OrgStatusFeedback.style.color = '#93C5FD';
-          DOM.step1OrgStatusFeedback.innerHTML = `Creating repository <strong>${owner}/${repo}</strong> on GitHub...`;
+          DOM.step1OrgStatusFeedback.innerHTML = `Creating repository <strong>${escapeHtml(owner)}/${escapeHtml(repo)}</strong> on GitHub...`;
         }
         try {
           const res = await api('/api/github/create-repo', 'POST', {
@@ -2458,14 +2461,16 @@
             if (DOM.step1OrgStatusFeedback) {
               DOM.step1OrgStatusFeedback.style.background = 'rgba(16, 185, 129, 0.18)';
               DOM.step1OrgStatusFeedback.style.color = '#34D399';
-              DOM.step1OrgStatusFeedback.innerHTML = `✅ <strong>Repository '${owner}/${repo}' Ready!</strong><br><small><a href="${res.repo_url}" target="_blank" style="color:#60A5FA;">↗ View on GitHub</a> | Pages: <a href="${res.pages_url}" target="_blank" style="color:#34D399;">${res.pages_url}</a></small>`;
+              const safeRepoUrl = /^https:\/\//i.test(String(res.repo_url || '')) ? escapeHtml(res.repo_url) : '#';
+              const safePagesUrl = /^https:\/\//i.test(String(res.pages_url || '')) ? escapeHtml(res.pages_url) : '#';
+              DOM.step1OrgStatusFeedback.innerHTML = `✅ <strong>Repository '${escapeHtml(owner)}/${escapeHtml(repo)}' Ready!</strong><br><small><a href="${safeRepoUrl}" target="_blank" rel="noopener noreferrer" style="color:#60A5FA;">↗ View on GitHub</a> | Pages: <a href="${safePagesUrl}" target="_blank" rel="noopener noreferrer" style="color:#34D399;">${safePagesUrl}</a></small>`;
             }
             showToast(`Repository '${owner}/${repo}' configured!`, 'success');
           } else {
             if (DOM.step1OrgStatusFeedback) {
               DOM.step1OrgStatusFeedback.style.background = 'rgba(239, 68, 68, 0.18)';
               DOM.step1OrgStatusFeedback.style.color = '#FCA5A5';
-              DOM.step1OrgStatusFeedback.innerHTML = `❌ ${res.error || 'Failed to create repository'}`;
+              DOM.step1OrgStatusFeedback.innerHTML = `❌ ${escapeHtml(res.error || 'Failed to create repository')}`;
             }
             showToast(res.error || 'Failed to create repository', 'error');
           }
@@ -2473,7 +2478,7 @@
           if (DOM.step1OrgStatusFeedback) {
             DOM.step1OrgStatusFeedback.style.background = 'rgba(239, 68, 68, 0.18)';
             DOM.step1OrgStatusFeedback.style.color = '#FCA5A5';
-            DOM.step1OrgStatusFeedback.innerHTML = `❌ Error: ${err.message}`;
+            DOM.step1OrgStatusFeedback.innerHTML = `❌ Error: ${escapeHtml(err.message || String(err))}`;
           }
         } finally {
           DOM.btnStep1CreateRepo.disabled = false;
@@ -2668,7 +2673,6 @@
     // Reusable Logo Reset Handler
 
     async function resetCustomLogo() {
-      if (!confirm('Revert to the default luxury vector SVG emblem?')) return;
       try {
         const res = await api('/api/upload-logo', 'POST', { reset: true });
         if (res.success) {
@@ -2892,9 +2896,10 @@
 
     function addDiffRow(slug, title, status, badgeClass) {
       const tr = document.createElement('tr');
+      const safeBadgeClass = String(badgeClass || '').replace(/[^a-zA-Z0-9 _-]/g, '');
       tr.innerHTML = `
 
-        <td><span class="badge ${badgeClass}">${status}</span></td>
+        <td><span class="badge ${safeBadgeClass}">${escapeHtml(status)}</span></td>
 
         <td><code>${escapeHtml(slug)}</code></td>
 
@@ -2914,8 +2919,7 @@
           return;
         }
         if (!state.posts || state.posts.length === 0) {
-          const proceed = confirm('No posts are currently ingested in this project. Proceed to Step 2 anyway?');
-          if (!proceed) return;
+          showToast('Proceeding to Step 2 with 0 ingested posts (live sample preview active).', 'info');
         }
         switchTab('tab-themes');
       });

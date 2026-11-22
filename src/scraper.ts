@@ -47,17 +47,29 @@ function isPrivateIpv4(ip: string): boolean {
 
 function isPrivateIpv6(ip: string): boolean {
   const norm = ip.toLowerCase();
-  return (
+  if (
     norm === '::1' ||
     norm === '::' ||
     norm.startsWith('fc') ||
     norm.startsWith('fd') ||
-    norm.startsWith('fe80:') ||
-    norm.startsWith('::ffff:127.') ||
-    norm.startsWith('::ffff:10.') ||
-    norm.startsWith('::ffff:192.168.') ||
-    norm.startsWith('::ffff:169.254.')
-  );
+    norm.startsWith('fe80:')
+  ) {
+    return true;
+  }
+  // Dotted-decimal IPv4-mapped IPv6 (e.g. ::ffff:127.0.0.1)
+  const dottedMatch = norm.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  if (dottedMatch) {
+    return isPrivateIpv4(dottedMatch[1]);
+  }
+  // Hex IPv4-mapped IPv6 normalized by Node URL parser (e.g. ::ffff:7f00:1)
+  const hexMatch = norm.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (hexMatch) {
+    const hi = parseInt(hexMatch[1], 16);
+    const lo = parseInt(hexMatch[2], 16);
+    const ipv4 = `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+    return isPrivateIpv4(ipv4);
+  }
+  return false;
 }
 
 export function assertSafePublicUrl(rawUrl: string): URL {
@@ -153,6 +165,32 @@ function composeTimeoutSignal(timeoutMs: number, parent?: AbortSignal): AbortSig
   return parent.aborted ? parent : timeoutSignal;
 }
 
+export async function fetchPublicSafe(
+  rawUrl: string,
+  init: RequestInit = {},
+  maxRedirects = 5
+): Promise<Response> {
+  let currentUrl = assertSafePublicUrl(rawUrl).toString();
+  for (let hop = 0; hop <= maxRedirects; hop++) {
+    const res = await fetch(currentUrl, {
+      ...init,
+      redirect: 'manual',
+    });
+    if (res.status >= 300 && res.status < 400) {
+      const location = res.headers.get('location');
+      if (!location) return res;
+      if (hop === maxRedirects) {
+        throw new Error(`Too many redirects fetching ${rawUrl}`);
+      }
+      const nextUrl = new URL(location, currentUrl).toString();
+      currentUrl = assertSafePublicUrl(nextUrl).toString();
+      continue;
+    }
+    return res;
+  }
+  throw new Error(`Redirect resolution failed for ${rawUrl}`);
+}
+
 function isLikelyPostUrl(url: string): boolean {
   if (!/^https?:\/\//i.test(url)) return false;
   if (/\.xml(\?.*)?$/i.test(url)) return false;
@@ -245,9 +283,8 @@ export async function discoverUrlsFromSource(
     seenSitemaps.add(sitemapUrl);
 
     const safe = assertSafePublicUrl(sitemapUrl).toString();
-    const res = await fetch(safe, {
+    const res = await fetchPublicSafe(safe, {
       headers: REQUEST_HEADERS,
-      redirect: 'follow',
       signal: composeTimeoutSignal(15000, signal),
     });
     if (!res.ok) {
@@ -642,9 +679,8 @@ export async function scrapeArticleFromUrl(entry: DiscoveredUrl, signal?: AbortS
   const safeUrl = assertSafePublicUrl(entry.url);
   const urlStr = safeUrl.toString();
 
-  const res = await fetch(urlStr, {
+  const res = await fetchPublicSafe(urlStr, {
     headers: REQUEST_HEADERS,
-    redirect: 'follow',
     signal: composeTimeoutSignal(20000, signal),
   });
   if (!res.ok) {
@@ -782,7 +818,7 @@ export async function fetchWpApiPosts(baseUrl: string, maxPosts = 100, signal?: 
 
   while (posts.length < limit && !signal?.aborted) {
     const apiUrl = `${safeBase}/wp-json/wp/v2/posts?_embed=1&per_page=${perPage}&page=${page}`;
-    const res = await fetch(apiUrl, {
+    const res = await fetchPublicSafe(apiUrl, {
       headers: REQUEST_HEADERS,
       signal: composeTimeoutSignal(15000, signal),
     });
@@ -882,12 +918,11 @@ export async function downloadAndOptimizeImageToWebp(params: {
     throw new Error('Image target path escapes assets directory.');
   }
 
-  const res = await fetch(safeUrl, {
+  const res = await fetchPublicSafe(safeUrl, {
     headers: {
       ...REQUEST_HEADERS,
       Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
     },
-    redirect: 'follow',
     signal: composeTimeoutSignal(20000, params.signal),
   });
   if (!res.ok) {

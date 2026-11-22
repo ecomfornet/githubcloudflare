@@ -305,7 +305,7 @@ export function createApp() {
   });
 
   async function handleGitHubOrgs(rawToken: string, res: express.Response) {
-    const token = !rawToken || rawToken.includes('****') ? store.config.github.token : rawToken;
+    const token = !rawToken || rawToken.includes('****') ? store.getEffectiveGitHubToken() : rawToken;
     if (!token || token.includes('****')) {
       res.json({
         success: false,
@@ -324,7 +324,10 @@ export function createApp() {
     const accounts: Array<Record<string, unknown>> = [];
 
     try {
-      const userRes = await fetch('https://api.github.com/user', { headers });
+      const userRes = await fetch('https://api.github.com/user', {
+        headers,
+        signal: AbortSignal.timeout(15000),
+      });
       if (userRes.status === 401) {
         res.json({
           success: false,
@@ -338,7 +341,10 @@ export function createApp() {
         const u = (await userRes.json()) as Record<string, unknown>;
         accounts.push({ login: u.login, type: 'User', is_org: false, avatar_url: u.avatar_url });
       }
-      const orgRes = await fetch('https://api.github.com/user/orgs', { headers });
+      const orgRes = await fetch('https://api.github.com/user/orgs', {
+        headers,
+        signal: AbortSignal.timeout(15000),
+      });
       if (orgRes.ok) {
         const orgs = (await orgRes.json()) as Array<Record<string, unknown>>;
         for (const o of orgs) {
@@ -360,7 +366,7 @@ export function createApp() {
     const body = (req.body || {}) as Record<string, unknown>;
     const orgName = String(body.org || store.config.github.owner || '').trim();
     const rawToken = String(body.token || '').trim();
-    const token = !rawToken || rawToken.includes('****') ? store.config.github.token : rawToken;
+    const token = !rawToken || rawToken.includes('****') ? store.getEffectiveGitHubToken() : rawToken;
 
     if (!orgName) {
       res.status(400).json({ success: false, error: 'Organization name is required' });
@@ -374,10 +380,16 @@ export function createApp() {
     if (token) headers.Authorization = `Bearer ${token}`;
 
     try {
-      let resp = await fetch(`https://api.github.com/orgs/${encodeURIComponent(orgName)}`, { headers });
+      let resp = await fetch(`https://api.github.com/orgs/${encodeURIComponent(orgName)}`, {
+        headers,
+        signal: AbortSignal.timeout(15000),
+      });
       let accountType = 'Organization';
       if (resp.status === 404) {
-        resp = await fetch(`https://api.github.com/users/${encodeURIComponent(orgName)}`, { headers });
+        resp = await fetch(`https://api.github.com/users/${encodeURIComponent(orgName)}`, {
+          headers,
+          signal: AbortSignal.timeout(15000),
+        });
         accountType = 'User';
       }
       if (resp.ok) {
@@ -411,7 +423,7 @@ export function createApp() {
     const repo = String(body.repo || store.config.github.repo || '').trim();
     const isOrg = body.is_org !== undefined ? Boolean(body.is_org) : store.config.github.is_org;
     const rawToken = String(body.token || '').trim();
-    const token = !rawToken || rawToken.includes('****') ? store.config.github.token : rawToken;
+    const token = !rawToken || rawToken.includes('****') ? store.getEffectiveGitHubToken() : rawToken;
 
     if (!owner || !repo) {
       res.status(400).json({ success: false, error: 'Both owner and repo are required.' });
@@ -432,6 +444,7 @@ export function createApp() {
     try {
       const checkRes = await fetch(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`, {
         headers,
+        signal: AbortSignal.timeout(15000),
       });
       let created = false;
       if (checkRes.status === 404) {
@@ -442,6 +455,7 @@ export function createApp() {
           method: 'POST',
           headers,
           body: JSON.stringify({ name: repo, private: false, auto_init: true }),
+          signal: AbortSignal.timeout(15000),
         });
         if (!createRes.ok) {
           const errText = await createRes.text();

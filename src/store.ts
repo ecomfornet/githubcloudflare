@@ -37,7 +37,9 @@ import { buildTrustPages, resolveSiteIdentity } from './static-pages.ts';
 import * as cheerio from 'cheerio';
 import { deployCloudflareWorkersAssets, sanitizeWorkerScriptName } from './cloudflare-deployer.ts';
 import {
+  assertSafePublicUrl,
   discoverUrlsFromSource,
+  fetchPublicSafe,
   fetchWpApiPosts,
   localizeAndConvertPostImages,
   optimizeDirectoryToWebp,
@@ -45,6 +47,20 @@ import {
   sanitizeEditedHtml,
   scrapeArticleFromUrl,
 } from './scraper.ts';
+
+function escapeXml(value: string): string {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function hasValidDomainHost(raw: string): boolean {
+  const host = stripProtocol(raw).split('/')[0].trim();
+  return Boolean(host && host.includes('.') && !/\s/.test(host));
+}
 
 export interface StoreOptions {
   workspaceDir?: string;
@@ -591,7 +607,11 @@ export class DashboardStore {
   }
 
   clearActiveProjectData(projectId?: string): Record<string, unknown> {
-    const pid = (projectId || this.activeProjectId || '').trim();
+    const requestedPid = (projectId || this.activeProjectId || '').trim();
+    const pid = this.projects[requestedPid] ? requestedPid : this.activeProjectId;
+    if (!pid || !this.projects[pid]) {
+      throw new Error(`Project '${requestedPid}' not found.`);
+    }
     if (this.ingestJob.status === 'running') {
       this.stopIngestJob();
     }
@@ -608,9 +628,10 @@ export class DashboardStore {
     };
     this.saveManifest();
 
-    // 2. Clean scraped_data/<pid>/html
-    const projHtmlDir = path.join(this.workspaceDir, 'scraped_data', pid, 'html');
-    if (fs.existsSync(projHtmlDir)) {
+    // 2. Clean scraped_data/<pid>/html (strictly confined inside workspace scraped_data)
+    const scrapedBase = path.resolve(this.workspaceDir, 'scraped_data');
+    const projHtmlDir = path.resolve(scrapedBase, pid, 'html');
+    if (projHtmlDir.startsWith(scrapedBase + path.sep) && fs.existsSync(projHtmlDir)) {
       fs.rmSync(projHtmlDir, { recursive: true, force: true });
       fs.mkdirSync(projHtmlDir, { recursive: true });
     }
@@ -710,9 +731,13 @@ export class DashboardStore {
     const assetsDir = path.join(this.workspaceDir, 'assets', 'images');
     let localImagesCount = 0;
     if (fs.existsSync(assetsDir)) {
-      localImagesCount = fs
-        .readdirSync(assetsDir)
-        .filter((f) => fs.statSync(path.join(assetsDir, f)).isFile()).length;
+      try {
+        localImagesCount = fs
+          .readdirSync(assetsDir, { withFileTypes: true })
+          .filter((entry) => entry.isFile()).length;
+      } catch {
+        localImagesCount = 0;
+      }
     }
 
     const activeProj = this.projects[this.activeProjectId];
@@ -971,7 +996,9 @@ export class DashboardStore {
     const activeProj = this.projects[this.activeProjectId];
     const customDom = activeProj?.cf_custom_domain || this.config.cloudflare.custom_domain || '';
     const projectName = this.config.cloudflare.project_name || this.activeProjectId || '';
-    const baseUrl = customDom ? `https://${stripProtocol(customDom)}` : getCloudflareLiveUrl(this.config.cloudflare);
+    const baseUrl = hasValidDomainHost(customDom)
+      ? `https://${stripProtocol(customDom)}`
+      : getCloudflareLiveUrl(this.config.cloudflare);
 
     if (isHub) {
       const existing = Object.values(this.manifest.posts);
@@ -1590,7 +1617,7 @@ export class DashboardStore {
     const posts = Object.values(this.manifest.posts);
     const categories = deriveCategories(this.manifest.posts);
     const customDomain = activeProj?.cf_custom_domain || this.config.cloudflare.custom_domain || '';
-    const baseUrl = customDomain
+    const baseUrl = hasValidDomainHost(customDomain)
       ? `https://${stripProtocol(customDomain)}`
       : getCloudflareLiveUrl(this.config.cloudflare);
     const identity = resolveSiteIdentity({
@@ -1720,7 +1747,7 @@ export class DashboardStore {
 
     // 5. sitemap.xml & robots.txt
     const sitemapXml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${sitemapUrls
-      .map((u) => `  <url><loc>${u}</loc></url>`)
+      .map((u) => `  <url><loc>${escapeXml(u)}</loc></url>`)
       .join('\n')}\n</urlset>\n`;
     fs.writeFileSync(path.join(outputDir, 'sitemap.xml'), sitemapXml, 'utf-8');
     filesCreated.push('sitemap.xml');
@@ -1793,10 +1820,22 @@ export class DashboardStore {
       'image/webp': '.webp',
       'image/svg+xml': '.svg',
     };
-    const ext = extMap[mime] || '.png';
-    const bytes = Buffer.from(b64, 'base64');
-    if (bytes.length > 10 * 1024 * 1024) {
-      throw new Error('Image file exceeds 10MB limit');
+    const ext = extMap[mime];
+    if (!ext) {
+      throw new Error(`Unsupported logo image format '${mime}'. Use PNG, JPEG, WebP, or SVG.`);
+    }
+    let bytes: Buffer<ArrayBufferLike> = Buffer.from(b64 || '', 'base64');
+    if (bytes.length === 0 || bytes.length > 10 * 1024 * 1024) {
+      throw new Error('Image file must be non-empty and under 10MB limit');
+    }
+    if (ext === '.svg') {
+      const sanitizedSvg = bytes
+        .toString('utf-8')
+        .replace(/<script\b[\s\S]*?<\/script>/gi, '')
+        .replace(/<foreignObject\b[\s\S]*?<\/foreignObject>/gi, '')
+        .replace(/\son[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+        .replace(/(?:href|xlink:href)\s*=\s*(?:"\s*javascript:[^"]*"|'\s*javascript:[^']*')/gi, '');
+      bytes = Buffer.from(sanitizedSvg, 'utf-8');
     }
     for (const prevExt of exts) {
       const p = path.join(assetsDir, `custom-logo${prevExt}`);
@@ -1847,7 +1886,10 @@ export class DashboardStore {
       let lastErr = '';
 
       // 1. Try standard User API Token verification
-      const userRes = await fetch('https://api.cloudflare.com/client/v4/user/tokens/verify', { headers });
+      const userRes = await fetch('https://api.cloudflare.com/client/v4/user/tokens/verify', {
+        headers,
+        signal: AbortSignal.timeout(15000),
+      });
       const userData = (await userRes.json().catch(() => ({}))) as CfApiResp;
       if (userRes.ok && userData.success) {
         valid = true;
@@ -1862,7 +1904,7 @@ export class DashboardStore {
       if (!valid && accountId) {
         const acctVerifyRes = await fetch(
           `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/tokens/verify`,
-          { headers }
+          { headers, signal: AbortSignal.timeout(15000) }
         );
         const acctVerifyData = (await acctVerifyRes.json().catch(() => ({}))) as CfApiResp;
         if (acctVerifyRes.ok && acctVerifyData.success) {
@@ -1880,7 +1922,7 @@ export class DashboardStore {
       if (!valid && accountId) {
         const acctRes = await fetch(
           `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}`,
-          { headers }
+          { headers, signal: AbortSignal.timeout(15000) }
         );
         const acctData = (await acctRes.json().catch(() => ({}))) as CfApiResp;
         if (acctRes.ok && acctData.success) {
@@ -1892,7 +1934,10 @@ export class DashboardStore {
       // 4. Auto-discover account ID if missing on a valid User token
       if (valid && !accountId) {
         try {
-          const listRes = await fetch('https://api.cloudflare.com/client/v4/accounts?per_page=1', { headers });
+          const listRes = await fetch('https://api.cloudflare.com/client/v4/accounts?per_page=1', {
+            headers,
+            signal: AbortSignal.timeout(15000),
+          });
           if (listRes.ok) {
             const listData = (await listRes.json().catch(() => ({}))) as CfApiResp;
             if (Array.isArray(listData.result) && listData.result[0]?.id) {
@@ -1910,7 +1955,7 @@ export class DashboardStore {
         try {
           const subRes = await fetch(
             `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/workers/subdomain`,
-            { headers }
+            { headers, signal: AbortSignal.timeout(15000) }
           );
           if (subRes.ok) {
             const subData = (await subRes.json().catch(() => ({}))) as CfApiResp;
@@ -2201,7 +2246,7 @@ export class DashboardStore {
     const posts = Object.values(this.manifest.posts);
     const categories = deriveCategories(this.manifest.posts);
     const customDomain = activeProj?.cf_custom_domain || this.config.cloudflare.custom_domain || '';
-    const baseUrl = customDomain
+    const baseUrl = hasValidDomainHost(customDomain)
       ? `https://${stripProtocol(customDomain)}`
       : getCloudflareLiveUrl({
           ...this.config.cloudflare,
@@ -2465,7 +2510,9 @@ export class DashboardStore {
       ...this.config.cloudflare,
       project_name: effectiveSub,
     });
-    const publicBaseUrl = customDomain ? `https://${stripProtocol(customDomain)}` : fallbackLiveUrl;
+    const publicBaseUrl = hasValidDomainHost(customDomain)
+      ? `https://${stripProtocol(customDomain)}`
+      : fallbackLiveUrl;
 
     if (dryRun) {
       const duration = Number(((Date.now() - startMs) / 1000).toFixed(2));
@@ -2586,7 +2633,8 @@ export class DashboardStore {
       const normalized = /^https?:\/\//i.test(rawWorkerOverride)
         ? rawWorkerOverride.replace(/\/+$/, '')
         : `https://${rawWorkerOverride.replace(/\/+$/, '')}`;
-      return { baseUrl: normalized, scriptName, accountSubdomain };
+      const safe = assertSafePublicUrl(normalized).toString().replace(/\/+$/, '');
+      return { baseUrl: safe, scriptName, accountSubdomain };
     }
 
     const rawCustom = stripProtocol(activeProj?.cf_custom_domain || this.config.cloudflare.custom_domain || '')
@@ -2639,9 +2687,11 @@ export class DashboardStore {
       }
     };
 
+    assertSafePublicUrl(baseUrl);
+
     // 1. Primary discovery: fetch /sitemap/ HTML page (explicitly separates Categories vs Published Articles)
     try {
-      const htmlSitemapRes = await fetch(`${baseUrl}/sitemap/`, {
+      const htmlSitemapRes = await fetchPublicSafe(`${baseUrl}/sitemap/`, {
         headers: { 'User-Agent': 'Mozilla/5.0 (compatible; pSEO-Hub/2.0)' },
         signal: AbortSignal.timeout(15000),
       });
@@ -2676,7 +2726,7 @@ export class DashboardStore {
 
     // 2. Secondary / fallback discovery: fetch /sitemap.xml
     try {
-      const xmlRes = await fetch(`${baseUrl}/sitemap.xml`, {
+      const xmlRes = await fetchPublicSafe(`${baseUrl}/sitemap.xml`, {
         headers: { 'User-Agent': 'Mozilla/5.0 (compatible; pSEO-Hub/2.0)' },
         signal: AbortSignal.timeout(15000),
       });
@@ -2745,7 +2795,7 @@ export class DashboardStore {
           }
 
           try {
-            const pageRes = await fetch(`${baseUrl}${webPath}`, {
+            const pageRes = await fetchPublicSafe(`${baseUrl}${webPath}`, {
               headers: { 'User-Agent': 'Mozilla/5.0 (compatible; pSEO-Hub/2.0)' },
               signal: AbortSignal.timeout(12000),
             });
@@ -2800,7 +2850,7 @@ export class DashboardStore {
                 const localDiskPath = path.join(assetsDir, path.basename(rawImgSrc));
                 if (!fs.existsSync(localDiskPath)) {
                   try {
-                    const imgRes = await fetch(imageUrl, { signal: AbortSignal.timeout(10000) });
+                    const imgRes = await fetchPublicSafe(imageUrl, { signal: AbortSignal.timeout(10000) });
                     if (imgRes.ok) {
                       const buf = Buffer.from(await imgRes.arrayBuffer());
                       if (buf.length > 0 && buf.length < 15 * 1024 * 1024) {
@@ -2873,9 +2923,10 @@ export class DashboardStore {
 
             // Mirror live HTML into local dist/ if dist exists so future single-post deploys/deletes never drop it
             if (hasLocalDist) {
+              const resolvedDistRoot = path.resolve(outputDir);
               const relFile = path.join(webPath.replace(/^\/+/, ''), 'index.html');
-              const distPostFile = path.join(outputDir, relFile);
-              if (!fs.existsSync(distPostFile)) {
+              const distPostFile = path.resolve(resolvedDistRoot, relFile);
+              if (distPostFile.startsWith(resolvedDistRoot + path.sep) && !fs.existsSync(distPostFile)) {
                 fs.mkdirSync(path.dirname(distPostFile), { recursive: true });
                 fs.writeFileSync(distPostFile, htmlText, 'utf-8');
               }
@@ -3092,7 +3143,7 @@ export class DashboardStore {
         sitemapUrls.push(`${baseUrl}/${tp.slug}/`);
       }
       const sitemapXml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${sitemapUrls
-        .map((u) => `  <url><loc>${u}</loc></url>`)
+        .map((u) => `  <url><loc>${escapeXml(u)}</loc></url>`)
         .join('\n')}\n</urlset>\n`;
       fs.writeFileSync(path.join(resolvedOut, 'sitemap.xml'), sitemapXml, 'utf-8');
       updatedIndexFiles.push('sitemap.xml');

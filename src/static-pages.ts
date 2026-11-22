@@ -138,7 +138,7 @@ export function buildTrustPages(params: {
       description: `Contact ${identity.siteName} at ${identity.contactEmail} for questions, feedback, or corrections.`,
       bodyHtml: `
         <p>Questions, corrections, or story ideas — we read every message. You can also email us directly at <a href="mailto:${email}"><strong>${email}</strong></a>.</p>
-        <form class="trust-contact-form" onsubmit="event.preventDefault(); this.querySelector('.form-feedback').textContent='Thank you — your message has been noted. For direct inquiries, email ${email}.'; this.reset();">
+        <form class="trust-contact-form" data-feedback="Thank you — your message has been noted. For direct inquiries, email ${email}." onsubmit="event.preventDefault(); this.querySelector('.form-feedback').textContent=this.dataset.feedback; this.reset();">
           <div class="form-row">
             <label for="contactName">Your name</label>
             <input id="contactName" type="text" required placeholder="Full name" />
