@@ -11,6 +11,7 @@ import {
   slugify,
 } from './types.ts';
 import { DashboardStore } from './store.ts';
+import { assertSafePublicUrl } from './scraper.ts';
 
 test('pure helpers: maskToken, slugify, deriveBrandFromDomain', () => {
   assert.equal(maskToken(''), '');
