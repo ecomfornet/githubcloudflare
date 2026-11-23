@@ -9,6 +9,7 @@ import type {
   Manifest,
   PostItem,
   ProjectItem,
+  StaticPageOverride,
 } from './types.ts';
 import {
   createDefaultConfig,
@@ -33,7 +34,14 @@ import {
   renderPostHtml,
   renderStaticPageHtml,
 } from './templates.ts';
-import { buildTrustPages, resolveSiteIdentity } from './static-pages.ts';
+import {
+  EDITABLE_STATIC_PAGE_META,
+  buildTrustPages,
+  extractUploadedPageHtml,
+  isEditableStaticPageSlug,
+  resolveSiteIdentity,
+  sanitizeStaticPageHtml,
+} from './static-pages.ts';
 import * as cheerio from 'cheerio';
 import { deployCloudflareWorkersAssets, sanitizeWorkerScriptName } from './cloudflare-deployer.ts';
 import {
@@ -77,6 +85,7 @@ export class DashboardStore {
   activeProjectId: string;
   activeManifestPath: string;
   projects: Record<string, ProjectItem>;
+  staticPageOverrides: Record<string, StaticPageOverride>;
   deployJob: DeployJob;
   ingestJob: IngestJob;
   logs: string[];
@@ -100,6 +109,7 @@ export class DashboardStore {
     this.config = this.loadConfig();
     this.manifest = this.loadManifestFile(this.manifestPath);
     this.projects = {};
+    this.staticPageOverrides = {};
     this.activeProjectId = this.config.active_project || 'stylesdays';
     this.activeManifestPath = this.manifestPath;
 
@@ -294,6 +304,7 @@ export class DashboardStore {
       this.activeProjectId = defaultId;
       this.config.active_project = defaultId;
       this.activeManifestPath = this.manifestPath;
+      this.staticPageOverrides = this.loadStaticPageOverrides(defaultId);
       return;
     }
 
@@ -323,11 +334,51 @@ export class DashboardStore {
       this.manifest = { version: '2.0', updated_at: new Date().toISOString(), posts: {}, categories: [] };
       this.activeManifestPath = projManifest;
     }
+    this.staticPageOverrides = this.loadStaticPageOverrides(this.activeProjectId);
   }
 
   private resolveManifestPath(pid: string): string {
     if (pid === 'stylesdays') return this.manifestPath;
     return path.join(this.workspaceDir, 'scraped_data', pid, 'manifest.json');
+  }
+
+  private resolveStaticPagesPath(pid: string): string {
+    const cleanPid = slugify(pid || 'stylesdays') || 'stylesdays';
+    return path.join(this.workspaceDir, 'scraped_data', cleanPid, 'static_pages.json');
+  }
+
+  private loadStaticPageOverrides(pid: string): Record<string, StaticPageOverride> {
+    const filePath = this.resolveStaticPagesPath(pid);
+    if (!fs.existsSync(filePath)) return {};
+    try {
+      const raw = JSON.parse(fs.readFileSync(filePath, 'utf-8')) as Record<string, unknown>;
+      const result: Record<string, StaticPageOverride> = {};
+      for (const [k, v] of Object.entries(raw || {})) {
+        const slug = String(k || '').trim().toLowerCase();
+        if (!isEditableStaticPageSlug(slug) || !v || typeof v !== 'object') continue;
+        const rec = v as Record<string, unknown>;
+        result[slug] = {
+          slug,
+          title: String(rec.title || '').trim(),
+          description: String(rec.description || '').trim(),
+          body_html: String(rec.body_html || '').trim(),
+          updated_at: String(rec.updated_at || ''),
+        };
+      }
+      return result;
+    } catch {
+      return {};
+    }
+  }
+
+  private saveStaticPageOverrides(): void {
+    try {
+      const target = this.resolveStaticPagesPath(this.activeProjectId || 'stylesdays');
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, JSON.stringify(this.staticPageOverrides, null, 2), 'utf-8');
+    } catch (err) {
+      this.log(`[WARN] Unable to persist static page overrides: ${String(err)}`);
+    }
   }
 
   log(message: string): void {
@@ -494,6 +545,7 @@ export class DashboardStore {
     this.config.build.theme = theme;
     this.config.build.routing_mode = routingMode;
     this.config.branding.custom_head_code = '';
+    this.staticPageOverrides = {};
 
     this.saveConfig();
     this.log(`Created isolated project '${cleanName}' (id=${pid}) with empty catalog.`);
@@ -606,6 +658,7 @@ export class DashboardStore {
     if (typeof item.custom_head_code === 'string') {
       this.config.branding.custom_head_code = item.custom_head_code;
     }
+    this.staticPageOverrides = this.loadStaticPageOverrides(pid);
 
     this.saveConfig();
     this.log(`Switched active project to '${item.name}' (id=${pid}, ${Object.keys(this.manifest.posts).length} posts).`);
@@ -1720,6 +1773,7 @@ export class DashboardStore {
       posts,
       categories,
       routingMode: effectiveRouting,
+      overrides: this.staticPageOverrides,
     });
     for (const page of trustPages) {
       const pageDir = path.join(outputDir, page.slug);
@@ -3136,6 +3190,7 @@ export class DashboardStore {
         posts: remainingPosts,
         categories,
         routingMode: effectiveRouting,
+        overrides: this.staticPageOverrides,
       });
       const htmlSitemapPage = trustPages.find((p) => p.slug === 'sitemap');
       if (htmlSitemapPage) {
@@ -3336,6 +3391,518 @@ export class DashboardStore {
       remaining_posts: remainingPosts.length,
       duration,
       message: msg,
+    };
+  }
+
+  // =========================================================================
+  // SITE PAGES (9 EDITABLE COMPANY/LEGAL PAGES) — UPLOAD, EDIT, PREVIEW & DEPLOY
+  // =========================================================================
+
+  private resolveCurrentSiteContext(): {
+    identity: ReturnType<typeof resolveSiteIdentity>;
+    posts: PostItem[];
+    categories: CategoryItem[];
+    routingMode: string;
+    themeKey: string;
+    baseUrl: string;
+    customDomain: string;
+    projectName: string;
+  } {
+    const activeProj = this.projects[this.activeProjectId];
+    const customDomain = activeProj?.cf_custom_domain || this.config.cloudflare.custom_domain || '';
+    const projectName = this.config.cloudflare.project_name || this.activeProjectId || 'stylesdays';
+    const baseUrl = hasValidDomainHost(customDomain)
+      ? `https://${stripProtocol(customDomain)}`
+      : getCloudflareLiveUrl(this.config.cloudflare);
+    const identity = resolveSiteIdentity({
+      customDomain,
+      baseUrl,
+      branding: this.config.branding,
+      projectName,
+    });
+    const posts = Object.values(this.manifest.posts);
+    const categories = deriveCategories(this.manifest.posts);
+    const routingMode = normalizeRoutingMode(this.config.build.routing_mode);
+    const themeKey = this.config.build.theme || 'nordic-studio';
+    return { identity, posts, categories, routingMode, themeKey, baseUrl, customDomain, projectName };
+  }
+
+  listStaticPages(): Array<{
+    slug: string;
+    label: string;
+    web_path: string;
+    title: string;
+    description: string;
+    body_html: string;
+    default_title: string;
+    default_description: string;
+    is_custom: boolean;
+    updated_at: string;
+    word_count: number;
+    char_count: number;
+  }> {
+    const ctx = this.resolveCurrentSiteContext();
+    const defaults = buildTrustPages({
+      identity: ctx.identity,
+      posts: ctx.posts,
+      categories: ctx.categories,
+      routingMode: ctx.routingMode,
+    });
+    const defaultBySlug = new Map(defaults.map((p) => [p.slug, p]));
+    const merged = buildTrustPages({
+      identity: ctx.identity,
+      posts: ctx.posts,
+      categories: ctx.categories,
+      routingMode: ctx.routingMode,
+      overrides: this.staticPageOverrides,
+    });
+    const mergedBySlug = new Map(merged.map((p) => [p.slug, p]));
+
+    return EDITABLE_STATIC_PAGE_META.map((meta) => {
+      const def = defaultBySlug.get(meta.slug);
+      const cur = mergedBySlug.get(meta.slug) || def;
+      const bodyHtml = (cur?.bodyHtml || '').trim();
+      const plainText = bodyHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      const wordCount = plainText ? plainText.split(' ').filter(Boolean).length : 0;
+      const override = this.staticPageOverrides[meta.slug];
+      return {
+        slug: meta.slug,
+        label: meta.label,
+        web_path: `/${meta.slug}/`,
+        title: cur?.title || meta.label,
+        description: cur?.description || '',
+        body_html: bodyHtml,
+        default_title: def?.title || meta.label,
+        default_description: def?.description || '',
+        is_custom: Boolean(override),
+        updated_at: override?.updated_at || '',
+        word_count: wordCount,
+        char_count: bodyHtml.length,
+      };
+    });
+  }
+
+  getStaticPage(slug: string) {
+    const cleanSlug = String(slug || '').trim().toLowerCase();
+    if (!isEditableStaticPageSlug(cleanSlug)) return null;
+    return this.listStaticPages().find((p) => p.slug === cleanSlug) || null;
+  }
+
+  updateStaticPage(slug: string, data: Record<string, unknown> = {}) {
+    const cleanSlug = String(slug || '').trim().toLowerCase();
+    if (!isEditableStaticPageSlug(cleanSlug)) {
+      throw new Error(`Page '${slug}' is not a valid editable site page.`);
+    }
+
+    if (data.reset === true) {
+      delete this.staticPageOverrides[cleanSlug];
+      this.saveStaticPageOverrides();
+      this.log(`[SITE PAGE] Reset '/${cleanSlug}/' back to built-in default template.`);
+      return this.getStaticPage(cleanSlug);
+    }
+
+    const current = this.getStaticPage(cleanSlug);
+    if (!current) {
+      throw new Error(`Page '${slug}' not found.`);
+    }
+
+    let nextTitle = typeof data.title === 'string' && data.title.trim() ? data.title.trim().slice(0, 180) : current.title;
+    let nextDesc =
+      typeof data.description === 'string' ? data.description.trim().slice(0, 320) : current.description;
+    let nextBodyHtml = current.body_html;
+
+    if (typeof data.raw_html === 'string' && data.raw_html.trim()) {
+      const extracted = extractUploadedPageHtml(data.raw_html.slice(0, 500_000));
+      if (!extracted.bodyHtml) {
+        throw new Error('Uploaded HTML file contains no valid body content after sanitization.');
+      }
+      nextBodyHtml = extracted.bodyHtml;
+      if (!(typeof data.title === 'string' && data.title.trim()) && extracted.title) {
+        nextTitle = extracted.title;
+      }
+      if (!(typeof data.description === 'string' && data.description.trim()) && extracted.description) {
+        nextDesc = extracted.description;
+      }
+    } else if (typeof data.body_html === 'string') {
+      nextBodyHtml = sanitizeStaticPageHtml(data.body_html.slice(0, 500_000));
+      if (!nextBodyHtml) {
+        throw new Error('Page HTML content cannot be empty. Use Reset to Default to restore built-in content.');
+      }
+    }
+
+    const updatedAt = new Date().toISOString();
+    this.staticPageOverrides[cleanSlug] = {
+      slug: cleanSlug,
+      title: nextTitle,
+      description: nextDesc,
+      body_html: nextBodyHtml,
+      updated_at: updatedAt,
+    };
+    this.saveStaticPageOverrides();
+    this.log(`[SITE PAGE] Saved custom HTML for '/${cleanSlug}/' (${nextBodyHtml.length} chars).`);
+    return this.getStaticPage(cleanSlug);
+  }
+
+  renderStaticPagePreview(slug: string, opts: Record<string, unknown> = {}): string {
+    const cleanSlug = String(slug || '').trim().toLowerCase();
+    if (!isEditableStaticPageSlug(cleanSlug)) {
+      throw new Error(`Page '${slug}' is not a valid editable site page.`);
+    }
+    const ctx = this.resolveCurrentSiteContext();
+    const current = this.getStaticPage(cleanSlug);
+    if (!current) {
+      throw new Error(`Page '${slug}' not found.`);
+    }
+
+    let previewTitle = typeof opts.title === 'string' && opts.title.trim() ? opts.title.trim() : current.title;
+    let previewDesc = typeof opts.description === 'string' ? opts.description.trim() : current.description;
+    let previewBody = current.body_html;
+
+    if (typeof opts.raw_html === 'string' && opts.raw_html.trim()) {
+      const extracted = extractUploadedPageHtml(opts.raw_html.slice(0, 500_000));
+      previewBody = extracted.bodyHtml || previewBody;
+      if (!(typeof opts.title === 'string' && opts.title.trim()) && extracted.title) {
+        previewTitle = extracted.title;
+      }
+      if (!(typeof opts.description === 'string' && opts.description.trim()) && extracted.description) {
+        previewDesc = extracted.description;
+      }
+    } else if (typeof opts.body_html === 'string' && opts.body_html.trim()) {
+      previewBody = sanitizeStaticPageHtml(opts.body_html.slice(0, 500_000)) || previewBody;
+    }
+
+    const effectiveTheme = typeof opts.theme === 'string' && opts.theme.trim() ? opts.theme.trim() : ctx.themeKey;
+    return renderStaticPageHtml({
+      page: {
+        slug: cleanSlug,
+        title: previewTitle,
+        description: previewDesc,
+        bodyHtml: previewBody,
+      },
+      categories: ctx.categories,
+      themeKey: effectiveTheme,
+      branding: this.config.branding,
+      identity: ctx.identity,
+    });
+  }
+
+  private rebuildStaticPages(
+    slugs: string[],
+    opts: { targetCloud?: string; subdomain?: string; theme?: string } = {}
+  ): {
+    outputDir: string;
+    token: string;
+    changedFiles: string[];
+    fullBootstrap: boolean;
+  } {
+    const validSlugs = slugs
+      .map((s) => String(s || '').trim().toLowerCase())
+      .filter((s) => isEditableStaticPageSlug(s));
+    if (validSlugs.length === 0) {
+      throw new Error('No valid editable site pages specified.');
+    }
+
+    const effectiveTheme = (opts.theme || this.config.build.theme || 'nordic-studio').trim();
+    const { token, outputDir } = this.resolveOutputDir(opts.targetCloud, opts.subdomain, opts.subdomain);
+    const hasExistingDist = fs.existsSync(path.join(outputDir, 'index.html'));
+    let fullBootstrap = false;
+
+    if (!hasExistingDist) {
+      this.runBuild({
+        clean: true,
+        targetCloud: opts.targetCloud,
+        subdomain: opts.subdomain,
+        projectName: opts.subdomain || token,
+        theme: effectiveTheme,
+      });
+      fullBootstrap = true;
+    }
+
+    const ctx = this.resolveCurrentSiteContext();
+    const trustPages = buildTrustPages({
+      identity: ctx.identity,
+      posts: ctx.posts,
+      categories: ctx.categories,
+      routingMode: ctx.routingMode,
+      overrides: this.staticPageOverrides,
+    });
+    const bySlug = new Map(trustPages.map((p) => [p.slug, p]));
+
+    const changedFiles: string[] = [];
+    for (const slug of validSlugs) {
+      const page = bySlug.get(slug);
+      if (!page) continue;
+      const pageDir = path.join(outputDir, slug);
+      fs.mkdirSync(pageDir, { recursive: true });
+      const html = renderStaticPageHtml({
+        page,
+        categories: ctx.categories,
+        themeKey: effectiveTheme,
+        branding: this.config.branding,
+        identity: ctx.identity,
+      });
+      fs.writeFileSync(path.join(pageDir, 'index.html'), html, 'utf-8');
+      changedFiles.push(`${slug}/index.html`);
+    }
+
+    return { outputDir, token, changedFiles, fullBootstrap };
+  }
+
+  private async publishRebuiltStaticPages(params: {
+    slugs: string[];
+    body: Record<string, unknown>;
+    verifySlug: string;
+    label: string;
+  }): Promise<Record<string, unknown>> {
+    const startMs = Date.now();
+    const { slugs, body, verifySlug, label } = params;
+    const activeProj = this.projects[this.activeProjectId];
+    const requestedPlatform = String(body.platform || body.target_cloud || activeProj?.platform || 'cloudflare')
+      .trim()
+      .toLowerCase();
+    const platform = requestedPlatform === 'github' ? 'github' : 'cloudflare';
+    const dryRun = Boolean(body.dry_run);
+    const effectiveSub = String(
+      body.subdomain ||
+        body.project_name ||
+        (platform === 'cloudflare' ? this.config.cloudflare.project_name : '') ||
+        this.activeProjectId ||
+        'stylesdays'
+    ).trim();
+
+    const rebuilt = this.rebuildStaticPages(slugs, {
+      targetCloud: platform,
+      subdomain: effectiveSub,
+      theme: typeof body.theme === 'string' ? body.theme : undefined,
+    });
+
+    const customDomain = activeProj?.cf_custom_domain || this.config.cloudflare.custom_domain || '';
+    const verifyPath = `/${verifySlug}/`;
+
+    if (platform === 'github') {
+      const owner = String(body.owner || this.config.github.owner || '').trim();
+      const repo = String(body.repo || this.config.github.repo || '').trim();
+      const branch = String(body.branch || this.config.github.branch || 'main').trim() || 'main';
+      const ghPagesBase = hasValidDomainHost(customDomain)
+        ? `https://${stripProtocol(customDomain)}`
+        : repo.endsWith('.github.io')
+          ? `https://${repo}`
+          : owner && repo
+            ? `https://${owner}.github.io/${repo}`
+            : `https://${effectiveSub}.github.io`;
+      const pageUrl = `${ghPagesBase}${verifyPath}`;
+
+      if (dryRun) {
+        const duration = Number(((Date.now() - startMs) / 1000).toFixed(2));
+        const msg = `[DRY-RUN] GitHub update ready for ${label}: ${rebuilt.changedFiles.length} file(s) (${duration}s).`;
+        this.log(`[PAGE DEPLOY] ${msg}`);
+        return {
+          success: true,
+          dry_run: true,
+          platform: 'github',
+          slugs,
+          page_url: pageUrl,
+          live_url: ghPagesBase,
+          changed_files: rebuilt.changedFiles,
+          uploaded_files: rebuilt.changedFiles.length,
+          cached_files: 0,
+          full_bootstrap: rebuilt.fullBootstrap,
+          duration,
+          message: msg,
+        };
+      }
+
+      const ghToken = this.getEffectiveGitHubToken();
+      if (!ghToken || !owner || !repo) {
+        throw new Error(
+          'GitHub token, owner, and repo must be configured in Settings before deploying site pages to GitHub Pages.'
+        );
+      }
+
+      const headers: Record<string, string> = {
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'pSEO-Dashboard/2.0',
+        Authorization: `Bearer ${ghToken}`,
+        'Content-Type': 'application/json',
+      };
+
+      let pushedCount = 0;
+      for (const relPath of rebuilt.changedFiles) {
+        const localFile = path.join(rebuilt.outputDir, relPath);
+        if (!fs.existsSync(localFile)) continue;
+        const encodedPath = relPath
+          .split('/')
+          .map((seg) => encodeURIComponent(seg))
+          .join('/');
+        const apiUrl = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodedPath}`;
+
+        let existingSha: string | undefined;
+        const getRes = await fetch(`${apiUrl}?ref=${encodeURIComponent(branch)}`, {
+          headers,
+          signal: AbortSignal.timeout(15000),
+        });
+        if (getRes.ok) {
+          const getData = (await getRes.json().catch(() => ({}))) as { sha?: string };
+          if (getData.sha) existingSha = getData.sha;
+        }
+
+        const contentBase64 = fs.readFileSync(localFile).toString('base64');
+        const putRes = await fetch(apiUrl, {
+          method: 'PUT',
+          headers,
+          body: JSON.stringify({
+            message: `Update site page ${label} (${relPath})`,
+            content: contentBase64,
+            branch,
+            ...(existingSha ? { sha: existingSha } : {}),
+          }),
+          signal: AbortSignal.timeout(20000),
+        });
+        if (!putRes.ok) {
+          const errText = await putRes.text().catch(() => `HTTP ${putRes.status}`);
+          throw new Error(`GitHub site page deploy failed for '${relPath}': ${errText}`);
+        }
+        pushedCount += 1;
+      }
+
+      const duration = Number(((Date.now() - startMs) / 1000).toFixed(2));
+      const msg = `Deployed ${label} to GitHub Pages (${pushedCount} file(s) pushed, rest of site untouched) in ${duration}s.`;
+      this.log(`[PAGE DEPLOY] ${msg}`);
+      return {
+        success: true,
+        platform: 'github',
+        slugs,
+        page_url: pageUrl,
+        live_url: ghPagesBase,
+        changed_files: rebuilt.changedFiles,
+        uploaded_files: pushedCount,
+        cached_files: 0,
+        full_bootstrap: rebuilt.fullBootstrap,
+        duration,
+        message: msg,
+      };
+    }
+
+    // Cloudflare Workers incremental static-page deployment
+    const fallbackLiveUrl = getCloudflareLiveUrl({
+      ...this.config.cloudflare,
+      project_name: effectiveSub,
+    });
+    const publicBaseUrl = hasValidDomainHost(customDomain)
+      ? `https://${stripProtocol(customDomain)}`
+      : fallbackLiveUrl;
+
+    if (dryRun) {
+      const duration = Number(((Date.now() - startMs) / 1000).toFixed(2));
+      const msg = `[DRY-RUN] Rebuilt ${rebuilt.changedFiles.length} file(s) for ${label} without full rebuild (${duration}s).`;
+      this.log(`[PAGE DEPLOY] ${msg}`);
+      return {
+        success: true,
+        dry_run: true,
+        platform: 'cloudflare',
+        slugs,
+        page_url: `${publicBaseUrl}${verifyPath}`,
+        live_url: fallbackLiveUrl,
+        changed_files: rebuilt.changedFiles,
+        uploaded_files: rebuilt.changedFiles.length,
+        cached_files: 0,
+        full_bootstrap: rebuilt.fullBootstrap,
+        duration,
+        message: msg,
+      };
+    }
+
+    const cfToken = this.getEffectiveCloudflareToken();
+    if (!cfToken) {
+      throw new Error(
+        'Cloudflare API Token is not configured. Set CLOUDFLARE_API_TOKEN or enter it in Settings.'
+      );
+    }
+
+    this.log(`[PAGE DEPLOY] Deploying ${label} (${rebuilt.changedFiles.length} page file(s) regenerated)...`);
+    const result = await deployCloudflareWorkersAssets({
+      apiToken: cfToken,
+      accountId: this.getEffectiveCloudflareAccountId(),
+      scriptName: effectiveSub,
+      outputDir: rebuilt.outputDir,
+      workspaceDir: this.workspaceDir,
+      compatibilityDate: this.config.cloudflare.compatibility_date || '2024-11-01',
+      accountSubdomain: this.config.cloudflare.account_subdomain || '',
+      verifyPath,
+      onLog: (m) => this.log(m),
+    });
+
+    if (result.accountSubdomain && result.accountSubdomain !== this.config.cloudflare.account_subdomain) {
+      this.config.cloudflare.account_subdomain = result.accountSubdomain;
+      this.saveConfig();
+    }
+
+    const duration = Number(((Date.now() - startMs) / 1000).toFixed(2));
+    const workerPageUrl = `${result.liveUrl}${verifyPath}`;
+    const customPageUrl = hasValidDomainHost(customDomain)
+      ? `https://${stripProtocol(customDomain)}${verifyPath}`
+      : workerPageUrl;
+    const msg = `Deployed ${label} to Cloudflare Edge (${result.uploadedFiles} changed file(s) uploaded, ${result.cachedFiles} cached) in ${duration}s.`;
+    this.log(`[PAGE DEPLOY] ${msg}`);
+
+    return {
+      success: true,
+      platform: 'cloudflare',
+      slugs,
+      page_url: customPageUrl,
+      worker_page_url: workerPageUrl,
+      live_url: result.liveUrl,
+      changed_files: rebuilt.changedFiles,
+      uploaded_files: result.uploadedFiles,
+      cached_files: result.cachedFiles,
+      total_files: result.filesCount,
+      full_bootstrap: rebuilt.fullBootstrap,
+      edge_verification: result.edgeVerification,
+      duration,
+      message: msg,
+    };
+  }
+
+  async deployStaticPage(slug: string, body: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+    const cleanSlug = String(slug || '').trim().toLowerCase();
+    if (!isEditableStaticPageSlug(cleanSlug)) {
+      throw new Error(`Page '${slug}' is not a valid editable site page.`);
+    }
+
+    const hasUpdates =
+      body.reset === true ||
+      typeof body.raw_html === 'string' ||
+      typeof body.body_html === 'string' ||
+      typeof body.title === 'string' ||
+      typeof body.description === 'string';
+    if (hasUpdates) {
+      this.updateStaticPage(cleanSlug, body);
+    }
+
+    const res = await this.publishRebuiltStaticPages({
+      slugs: [cleanSlug],
+      body,
+      verifySlug: cleanSlug,
+      label: `'/${cleanSlug}/'`,
+    });
+    return {
+      ...res,
+      slug: cleanSlug,
+      page: this.getStaticPage(cleanSlug),
+    };
+  }
+
+  async deployAllStaticPages(body: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+    const allSlugs = EDITABLE_STATIC_PAGE_META.map((m) => m.slug);
+    const res = await this.publishRebuiltStaticPages({
+      slugs: allSlugs,
+      body,
+      verifySlug: 'about',
+      label: `all ${allSlugs.length} site pages`,
+    });
+    return {
+      ...res,
+      pages: this.listStaticPages(),
     };
   }
 }

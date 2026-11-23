@@ -114,6 +114,14 @@ export interface CategoryItem {
   slug: string;
 }
 
+export interface StaticPageOverride {
+  slug: string;
+  title: string;
+  description: string;
+  body_html: string;
+  updated_at: string;
+}
+
 export interface Manifest {
   version: string;
   updated_at: string;

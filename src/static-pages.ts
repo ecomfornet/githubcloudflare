@@ -1,4 +1,5 @@
-import type { BrandingConfig, CategoryItem, PostItem } from './types.ts';
+import * as cheerio from 'cheerio';
+import type { BrandingConfig, CategoryItem, PostItem, StaticPageOverride } from './types.ts';
 import { deriveBrandFromDomain, resolvePostRoute, slugify, stripProtocol } from './types.ts';
 
 export interface SiteIdentity {
@@ -15,6 +16,173 @@ export interface StaticPageSpec {
   title: string;
   description: string;
   bodyHtml: string;
+  isCustom?: boolean;
+  updatedAt?: string;
+}
+
+export interface EditableStaticPageMeta {
+  slug: string;
+  label: string;
+}
+
+export const EDITABLE_STATIC_PAGE_META: readonly EditableStaticPageMeta[] = [
+  { slug: 'about', label: 'About Us' },
+  { slug: 'contact', label: 'Contact' },
+  { slug: 'editorial-policy', label: 'Editorial Policy' },
+  { slug: 'fact-checking-policy', label: 'Fact-Checking Policy' },
+  { slug: 'privacy-policy', label: 'Privacy Policy' },
+  { slug: 'cookie-policy', label: 'Cookie Policy' },
+  { slug: 'terms', label: 'Terms & Conditions' },
+  { slug: 'disclaimer', label: 'Disclaimer' },
+  { slug: 'copyright', label: 'Copyright & Images' },
+] as const;
+
+const EDITABLE_SLUG_SET = new Set(EDITABLE_STATIC_PAGE_META.map((m) => m.slug));
+
+export function isEditableStaticPageSlug(slug: string): boolean {
+  return EDITABLE_SLUG_SET.has(String(slug || '').trim().toLowerCase());
+}
+
+const STATIC_PAGE_ALLOWED_TAGS = new Set([
+  'h2', 'h3', 'h4', 'h5', 'h6',
+  'p', 'div', 'section', 'article', 'aside', 'header', 'footer', 'main', 'nav',
+  'span', 'strong', 'b', 'em', 'i', 'u', 's', 'small', 'mark', 'sub', 'sup',
+  'br', 'hr',
+  'ul', 'ol', 'li', 'dl', 'dt', 'dd',
+  'blockquote', 'pre', 'code', 'figure', 'figcaption',
+  'img', 'a',
+  'table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td', 'caption',
+  'details', 'summary',
+  'form', 'label', 'input', 'textarea', 'select', 'option', 'button',
+]);
+
+const STATIC_PAGE_ALLOWED_ATTRS = new Set([
+  'class', 'id', 'href', 'src', 'alt', 'title', 'target', 'rel',
+  'width', 'height', 'loading', 'decoding',
+  'type', 'name', 'placeholder', 'rows', 'cols', 'required', 'for', 'value',
+  'colspan', 'rowspan', 'aria-label', 'aria-live', 'role', 'open', 'method', 'action',
+]);
+
+function sanitizePageSafeUrl(raw: string, allowMailTel = true): string {
+  const trimmed = String(raw || '').trim();
+  if (!trimmed) return '';
+  if (/^(javascript|vbscript|data):/i.test(trimmed)) return '';
+  if (trimmed.startsWith('/') || trimmed.startsWith('#')) return trimmed;
+  if (allowMailTel && /^(mailto|tel):/i.test(trimmed)) return trimmed;
+  if (/^https?:\/\//i.test(trimmed)) {
+    try {
+      const u = new URL(trimmed);
+      if (u.protocol === 'http:' || u.protocol === 'https:') return u.toString();
+    } catch {
+      return '';
+    }
+  }
+  return '';
+}
+
+/**
+ * Sanitizes user-uploaded or user-edited HTML for static company/legal pages.
+ * Preserves semantic layout, links (including mailto:/tel:), tables, images, and contact forms,
+ * while stripping executable tags (<script>, <iframe>, <object>, <embed>) and inline on* handlers.
+ */
+export function sanitizeStaticPageHtml(rawHtml: string): string {
+  if (!rawHtml || !rawHtml.trim()) return '';
+  const $ = cheerio.load(`<div id="__static_page_root__">${rawHtml}</div>`);
+  const root = $('#__static_page_root__');
+
+  root.find('script, style, noscript, iframe, object, embed, applet, base, meta, link').remove();
+
+  root.find('*').each((_, node) => {
+    const el = $(node);
+    const tagName = (
+      (node as { tagName?: string; name?: string }).tagName ||
+      (node as { name?: string }).name ||
+      ''
+    ).toLowerCase();
+    if (!tagName) return;
+
+    if (tagName === 'h1') {
+      el.replaceWith(`<h2>${el.html() || ''}</h2>`);
+      return;
+    }
+
+    if (!STATIC_PAGE_ALLOWED_TAGS.has(tagName)) {
+      el.replaceWith(el.contents());
+      return;
+    }
+
+    const rawAttribs = (node as { attribs?: Record<string, string> }).attribs || {};
+    for (const [attrName, attrVal] of Object.entries(rawAttribs)) {
+      const lower = attrName.toLowerCase();
+      if (lower.startsWith('on') || !STATIC_PAGE_ALLOWED_ATTRS.has(lower)) {
+        el.removeAttr(attrName);
+        continue;
+      }
+      if (lower === 'href') {
+        const safe = sanitizePageSafeUrl(attrVal, true);
+        if (!safe) el.removeAttr(attrName);
+        else {
+          el.attr('href', safe);
+          if (/^https?:\/\//i.test(safe)) {
+            el.attr('rel', 'noopener noreferrer');
+          }
+        }
+      } else if (lower === 'src') {
+        const safe = sanitizePageSafeUrl(attrVal, false);
+        if (!safe) {
+          if (tagName === 'img') {
+            el.remove();
+            return;
+          }
+          el.removeAttr(attrName);
+        } else {
+          el.attr('src', safe);
+        }
+      } else if (lower === 'action') {
+        const safe = sanitizePageSafeUrl(attrVal, true);
+        if (!safe) el.removeAttr(attrName);
+        else el.attr('action', safe);
+      }
+    }
+  });
+
+  return (root.html() || '').trim();
+}
+
+/**
+ * Extracts body HTML plus optional <title> and <meta name="description"> from
+ * either a full uploaded HTML document or an HTML fragment, then sanitizes it safely.
+ */
+export function extractUploadedPageHtml(rawInput: string): {
+  title?: string;
+  description?: string;
+  bodyHtml: string;
+} {
+  const raw = String(rawInput || '').trim();
+  if (!raw) return { bodyHtml: '' };
+
+  let extractedTitle: string | undefined;
+  let extractedDesc: string | undefined;
+  let candidateBody = raw;
+
+  const hasFullDoc = /<(?:!doctype|html|head|body)\b/i.test(raw);
+  if (hasFullDoc) {
+    const $doc = cheerio.load(raw);
+    const t = $doc('head title').first().text().trim();
+    if (t) extractedTitle = t.slice(0, 160);
+    const d = $doc('meta[name="description"]').attr('content')?.trim();
+    if (d) extractedDesc = d.slice(0, 300);
+    const bodyEl = $doc('body');
+    if (bodyEl.length > 0) {
+      candidateBody = bodyEl.html() || '';
+    }
+  }
+
+  return {
+    ...(extractedTitle ? { title: extractedTitle } : {}),
+    ...(extractedDesc ? { description: extractedDesc } : {}),
+    bodyHtml: sanitizeStaticPageHtml(candidateBody),
+  };
 }
 
 /**
@@ -96,8 +264,9 @@ export function buildTrustPages(params: {
   posts: PostItem[];
   categories: CategoryItem[];
   routingMode: string;
+  overrides?: Record<string, StaticPageOverride>;
 }): StaticPageSpec[] {
-  const { identity, posts, categories, routingMode } = params;
+  const { identity, posts, categories, routingMode, overrides } = params;
   const name = esc(identity.siteName);
   const domain = esc(identity.domain);
   const email = esc(identity.contactEmail);
@@ -117,7 +286,7 @@ export function buildTrustPages(params: {
     })
     .join('');
 
-  return [
+  const basePages: StaticPageSpec[] = [
     {
       slug: 'about',
       title: `About ${identity.siteName}`,
@@ -294,4 +463,24 @@ export function buildTrustPages(params: {
       `,
     },
   ];
+
+  const defaults: StaticPageSpec[] = basePages;
+  if (!overrides || Object.keys(overrides).length === 0) {
+    return defaults;
+  }
+
+  return defaults.map((page) => {
+    const custom = overrides[page.slug];
+    if (!custom || !isEditableStaticPageSlug(page.slug)) {
+      return page;
+    }
+    return {
+      slug: page.slug,
+      title: (custom.title || '').trim() || page.title,
+      description: (custom.description || '').trim() || page.description,
+      bodyHtml: (custom.body_html || '').trim() || page.bodyHtml,
+      isCustom: true,
+      updatedAt: custom.updated_at || '',
+    };
+  });
 }

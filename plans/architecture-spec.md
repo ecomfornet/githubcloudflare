@@ -28,3 +28,11 @@
 - Prune uncalled backend endpoints and unused methods (`deleteProject`, `resetAllProjects`, `normalizeSlug`, legacy `distooso` checks).
 - Prune dead `display: none` compatibility stubs from `public/index.html`, dead DOM/split/dual/legacy-tab code and excessive blank lines from `public/app.js`, and unused CSS rule blocks from `public/style.css` while preserving 100% of active UI styling and behavior.
 
+## 5. Step 3 Site Pages Manager (HTML Upload, Inline Editor & Direct 2-Option Deploy)
+- **Editable Allowlist (9 Pages)**: `about`, `contact`, `editorial-policy`, `fact-checking-policy`, `privacy-policy`, `cookie-policy`, `terms`, `disclaimer`, `copyright`.
+- **Storage**: Per-project JSON overrides persisted at `scraped_data/<pid>/static_pages.json` (isolated per project, merged cleanly into `buildTrustPages()` across full builds, previews, and incremental deploys).
+- **Sanitization & HTML Extraction**: `extractUploadedPageHtml()` & `sanitizeStaticPageHtml()` in `src/static-pages.ts` extract `<body>` + optional `<title>`/`<meta name="description">` from full `.html` documents or fragments, preserve semantic markup + safe contact forms, and strip executable tags (`script`, `iframe`, `object`, `embed`) and `on*` handlers.
+- **API Surface**: `GET /api/pages`, `GET /api/pages/:slug`, `PUT /api/pages/:slug` (save, upload HTML, or reset to default), `POST /api/pages/:slug/preview`, `POST /api/pages/:slug/deploy` (`platform: 'cloudflare' | 'github'`), `POST /api/pages/deploy-all`.
+- **UI**: Sub-tab inside **03 Catalog** (`Articles & Posts` / `Site Pages (9)`) with per-row `Upload HTML`, `View`, `Edit`, `Deploy` controls, bulk 2-option deploy buttons, and a full Page Editor Modal with Visual / HTML / Live Preview tabs + explicit Cloudflare & GitHub direct deploy options.
+
+

@@ -1345,3 +1345,178 @@ test('custom <head> code saves per project, strips breakout tags, and injects at
   }
 });
 
+test('Site Pages Manager (9 legal/company pages): HTML upload extraction & sanitization, view/preview, edit/reset, project isolation, and direct Cloudflare + GitHub deploy', async () => {
+  const { EDITABLE_STATIC_PAGE_META, extractUploadedPageHtml, isEditableStaticPageSlug } = await import(
+    './static-pages.ts'
+  );
+
+  // 1. Strict 9-page allowlist blocks traversal & unknown slugs
+  assert.equal(EDITABLE_STATIC_PAGE_META.length, 9);
+  for (const slug of [
+    'about',
+    'contact',
+    'editorial-policy',
+    'fact-checking-policy',
+    'privacy-policy',
+    'cookie-policy',
+    'terms',
+    'disclaimer',
+    'copyright',
+  ]) {
+    assert.equal(isEditableStaticPageSlug(slug), true);
+  }
+  assert.equal(isEditableStaticPageSlug('../etc/passwd'), false);
+  assert.equal(isEditableStaticPageSlug('sitemap'), false);
+  assert.equal(isEditableStaticPageSlug('unknown-page'), false);
+
+  // 2. HTML file extraction parses <title>, <meta name="description">, safe <body> and strips XSS
+  const uploadedDoc = `<!DOCTYPE html>
+  <html>
+    <head>
+      <title>Custom About Atelier</title>
+      <meta name="description" content="Our handcrafted botanical home studio story." />
+    </head>
+    <body>
+      <h1>Welcome Home</h1>
+      <section class="story"><p>Email <a href="mailto:hello@atelier.test" onclick="alert(1)">hello@atelier.test</a></p></section>
+      <script>alert('xss')</script>
+      <iframe src="https://evil.test"></iframe>
+      <img src="javascript:alert(1)" onerror="alert(2)" />
+    </body>
+  </html>`;
+  const extracted = extractUploadedPageHtml(uploadedDoc);
+  assert.equal(extracted.title, 'Custom About Atelier');
+  assert.equal(extracted.description, 'Our handcrafted botanical home studio story.');
+  assert.match(extracted.bodyHtml, /<h2>Welcome Home<\/h2>/);
+  assert.match(extracted.bodyHtml, /mailto:hello@atelier\.test/);
+  assert.equal(/<script|alert\(|<iframe|onclick=|onerror=/i.test(extracted.bodyHtml), false);
+
+  // 3. End-to-end store persistence, preview, incremental Cloudflare & GitHub deploys, reset & project isolation
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pseo-static-pages-test-'));
+  const origFetch = globalThis.fetch;
+  try {
+    const store = new DashboardStore({ workspaceDir: tmpDir });
+    await store.executeIngestion({ sourceType: 'sitemap', urlOrList: '' });
+    store.updateConfig({
+      cloudflare: {
+        api_token: 'cf_test_token_pages',
+        account_id: 'acct_pages_123',
+        project_name: 'pagesdemo',
+        account_subdomain: 'demoacct',
+      },
+      github: {
+        token: 'ghp_test_token_pages',
+        owner: 'demo-org',
+        repo: 'pages-repo',
+        branch: 'main',
+      },
+    });
+
+    const pages = store.listStaticPages();
+    assert.equal(pages.length, 9);
+    assert.equal(pages.every((p) => !p.is_custom), true);
+
+    // Option 1: Upload full .html file into /about/
+    const updatedAbout = store.updateStaticPage('about', { raw_html: uploadedDoc });
+    assert.ok(updatedAbout);
+    assert.equal(updatedAbout.is_custom, true);
+    assert.equal(updatedAbout.title, 'Custom About Atelier');
+    assert.match(updatedAbout.body_html, /Welcome Home/);
+
+    // Verify persistence across full store reload
+    const reloaded = new DashboardStore({ workspaceDir: tmpDir });
+    assert.equal(reloaded.getStaticPage('about')?.is_custom, true);
+    assert.equal(reloaded.getStaticPage('about')?.title, 'Custom About Atelier');
+
+    // Verify Live Preview renders active theme + custom uploaded content
+    const previewHtml = reloaded.renderStaticPagePreview('about', { theme: 'pinterest-mag' });
+    assert.match(previewHtml, /class="theme-pinterest-mag"/);
+    assert.match(previewHtml, /Custom About Atelier/);
+    assert.match(previewHtml, /Welcome Home/);
+
+    // Initial full build, backdate sibling post to prove single-page deploy leaves sibling posts untouched
+    const initialBuild = reloaded.runBuild({ clean: true, targetCloud: 'cloudflare', theme: 'nordic-studio' });
+    assert.equal(initialBuild.success, true);
+    const outDir = String(initialBuild.output_dir);
+    const postSlug = reloaded.listPosts()[0].slug;
+    const siblingPostFile = path.join(outDir, postSlug, 'index.html');
+    const pastTime = new Date(Date.now() - 10_000);
+    fs.utimesSync(siblingPostFile, pastTime, pastTime);
+    const postMtimeBefore = fs.statSync(siblingPostFile).mtimeMs;
+
+    // Direct Deploy Option 1: Cloudflare Edge for /about/
+    let verifiedUrl = '';
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/assets-upload-session')) {
+        const body = JSON.parse(String(init?.body || '{}')) as { manifest?: Record<string, { hash: string }> };
+        const aboutHash = body.manifest?.['/about/index.html']?.hash;
+        return new Response(
+          JSON.stringify({ success: true, result: { jwt: 'jwt-1', buckets: aboutHash ? [[aboutHash]] : [] } }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      if (url.includes('/workers/assets/upload')) {
+        return new Response(JSON.stringify({ success: true, result: { jwt: 'jwt-done' } }), { status: 200 });
+      }
+      if (url.includes('/subdomain')) {
+        return new Response(JSON.stringify({ success: true, result: { enabled: true } }), { status: 200 });
+      }
+      if (url.endsWith('/workers/scripts/pagesdemo')) {
+        return new Response(JSON.stringify({ success: true, result: { id: 'pagesdemo' } }), { status: 200 });
+      }
+      if (url.startsWith('https://pagesdemo.demoacct.workers.dev/')) {
+        verifiedUrl = url;
+        return new Response('<html><body>About Live</body></html>', { status: 200 });
+      }
+      return new Response(JSON.stringify({ success: true }), { status: 200 });
+    }) as typeof fetch;
+
+    const cfDeploy = await reloaded.deployStaticPage('about', { platform: 'cloudflare' });
+    assert.equal(cfDeploy.success, true);
+    assert.equal(cfDeploy.platform, 'cloudflare');
+    assert.equal(cfDeploy.uploaded_files, 1);
+    assert.equal(verifiedUrl, 'https://pagesdemo.demoacct.workers.dev/about/');
+    assert.equal(fs.statSync(siblingPostFile).mtimeMs, postMtimeBefore);
+    assert.match(fs.readFileSync(path.join(outDir, 'about', 'index.html'), 'utf-8'), /Custom About Atelier/);
+
+    // Direct Deploy Option 2: GitHub Pages for /privacy-policy/
+    reloaded.runBuild({ clean: true, targetCloud: 'github', projectName: 'pagesdemo' });
+    const ghPushed: string[] = [];
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === 'PUT' && url.includes('/contents/')) {
+        ghPushed.push(url.split('/contents/')[1]);
+        return new Response(JSON.stringify({ content: { sha: 'sha-new' } }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ sha: 'sha-old' }), { status: 200 });
+    }) as typeof fetch;
+
+    const ghDeploy = await reloaded.deployStaticPage('privacy-policy', {
+      platform: 'github',
+      title: 'Updated Privacy Policy',
+      body_html: '<h2>Your Privacy Matters</h2><p>Custom legal HTML pushed directly to GitHub.</p>',
+    });
+    assert.equal(ghDeploy.success, true);
+    assert.equal(ghDeploy.platform, 'github');
+    assert.deepEqual(ghPushed, ['privacy-policy/index.html']);
+
+    // Bulk deploy all 9 pages (dry-run)
+    const allRes = await reloaded.deployAllStaticPages({ platform: 'cloudflare', dry_run: true });
+    assert.equal(allRes.success, true);
+    assert.equal((allRes.changed_files as string[]).length, 9);
+
+    // Reset to default restores built-in template
+    const resetRes = reloaded.updateStaticPage('about', { reset: true });
+    assert.equal(resetRes?.is_custom, false);
+
+    // Project isolation: new project starts with 0 custom pages
+    reloaded.createProject({ name: 'Isolated Legal Site', cf_project_name: 'isolatedlegal' });
+    assert.equal(reloaded.listStaticPages().every((p) => !p.is_custom), true);
+  } finally {
+    globalThis.fetch = origFetch;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+

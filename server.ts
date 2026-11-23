@@ -160,6 +160,68 @@ export function createApp() {
     }
   });
 
+  // --- Site Pages (9 Editable Company & Legal Pages) ---
+  app.get('/api/pages', (_req, res) => {
+    const pages = store.listStaticPages();
+    res.json({
+      success: true,
+      total: pages.length,
+      custom_count: pages.filter((p) => p.is_custom).length,
+      pages,
+    });
+  });
+
+  app.post('/api/pages/deploy-all', async (req, res) => {
+    try {
+      const result = await store.deployAllStaticPages((req.body || {}) as Record<string, unknown>);
+      res.json(result);
+    } catch (err) {
+      res.status(400).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  app.get('/api/pages/:slug', (req, res) => {
+    const page = store.getStaticPage(req.params.slug);
+    if (!page) {
+      res.status(404).json({ success: false, error: `Site page '${req.params.slug}' not found.` });
+      return;
+    }
+    res.json({ success: true, page });
+  });
+
+  app.put('/api/pages/:slug', (req, res) => {
+    try {
+      const page = store.updateStaticPage(req.params.slug, (req.body || {}) as Record<string, unknown>);
+      res.json({ success: true, page });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const status = message.toLowerCase().includes('not a valid') || message.toLowerCase().includes('not found') ? 404 : 400;
+      res.status(status).json({ success: false, error: message });
+    }
+  });
+
+  app.post('/api/pages/:slug/preview', (req, res) => {
+    try {
+      const html = store.renderStaticPagePreview(req.params.slug, (req.body || {}) as Record<string, unknown>);
+      res.json({ success: true, html });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const status = message.toLowerCase().includes('not a valid') || message.toLowerCase().includes('not found') ? 404 : 400;
+      res.status(status).json({ success: false, error: message });
+    }
+  });
+
+  app.post('/api/pages/:slug/deploy', async (req, res) => {
+    try {
+      const result = await store.deployStaticPage(req.params.slug, (req.body || {}) as Record<string, unknown>);
+      res.json(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const status = message.toLowerCase().includes('not a valid') || message.toLowerCase().includes('not found') ? 404 : 400;
+      res.status(status).json({ success: false, error: message });
+    }
+  });
+
   // --- Live Theme Preview ---
   app.post('/api/preview', (req, res) => {
     const body = (req.body || {}) as Record<string, unknown>;

@@ -24,3 +24,16 @@
 | `public/style.css` | 2,655 → 1,463 lines | Pruned 166 unused CSS rule blocks | Balanced braces + visual check |
 | **Total** | **13,953 → 9,616 lines (-31.1%)** | **-4,337 lines removed** | **Verified** |
 
+## 03 Catalog — Site Pages Manager (9 Legal/Company Pages) Log
+
+| File Path | Key Exports / Changes | Verification Status |
+|---|---|---|
+| `plans/architecture-spec.md` | Section 5 blueprint for Site Pages (9) upload, edit, preview, and 2-option deploy | Approved |
+| `src/types.ts` | `StaticPageOverride` interface | Verified (`tsc --noEmit`) |
+| `src/static-pages.ts` | `EDITABLE_STATIC_PAGE_META`, `isEditableStaticPageSlug`, `sanitizeStaticPageHtml`, `extractUploadedPageHtml`, override merge in `buildTrustPages` | Verified (17/17 unit tests) |
+| `src/store.ts` | Per-project `static_pages.json` persistence, `listStaticPages`, `getStaticPage`, `updateStaticPage`, `renderStaticPagePreview`, `deployStaticPage`, `deployAllStaticPages` | Verified (17/17 unit tests) |
+| `server.ts` | REST endpoints `/api/pages`, `/api/pages/deploy-all`, `/api/pages/:slug`, `/api/pages/:slug/preview`, `/api/pages/:slug/deploy` | Verified live in Chromium |
+| `public/index.html`, `public/style.css`, `public/app.js` | Segmented sub-tab `Site Pages (9)`, per-page HTML upload, Visual/HTML/Live Preview modal, direct Cloudflare & GitHub single + bulk deploy | Verified live in Chromium (0 console errors) |
+| `src/store.test.ts` | Test #17 covering all 9 pages, HTML extraction/XSS stripping, persistence, project isolation, CF & GH incremental/bulk deploy | 17/17 passing |
+
+

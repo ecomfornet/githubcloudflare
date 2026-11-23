@@ -171,6 +171,39 @@
     catalogCategoryPills: document.getElementById('catalogCategoryPills'),
     fetchWorkerPostsBtn: document.getElementById('fetchWorkerPostsBtn'),
     catalogWorkerStatus: document.getElementById('catalogWorkerStatus'),
+    catalogPostsCountTag: document.getElementById('catalogPostsCountTag'),
+    catalogPagesStatusTag: document.getElementById('catalogPagesStatusTag'),
+    staticPagesBody: document.getElementById('staticPagesBody'),
+    staticPageQuickFileInput: document.getElementById('staticPageQuickFileInput'),
+    staticPagesDeployStatus: document.getElementById('staticPagesDeployStatus'),
+    btnDeployAllPagesCf: document.getElementById('btnDeployAllPagesCf'),
+    btnDeployAllPagesGh: document.getElementById('btnDeployAllPagesGh'),
+
+    // Static Page Editor Modal
+    staticPageEditModal: document.getElementById('staticPageEditModal'),
+    modalStaticPageTitle: document.getElementById('modalStaticPageTitle'),
+    modalStaticPageRoute: document.getElementById('modalStaticPageRoute'),
+    modalStaticPageStatusBadge: document.getElementById('modalStaticPageStatusBadge'),
+    closeStaticPageModalBtn: document.getElementById('closeStaticPageModalBtn'),
+    cancelStaticPageModalBtn: document.getElementById('cancelStaticPageModalBtn'),
+    editStaticPageForm: document.getElementById('editStaticPageForm'),
+    editStaticPageSlug: document.getElementById('editStaticPageSlug'),
+    editStaticPageTitle: document.getElementById('editStaticPageTitle'),
+    editStaticPageDescription: document.getElementById('editStaticPageDescription'),
+    modalStaticPageFileInput: document.getElementById('modalStaticPageFileInput'),
+    btnResetStaticPageDefault: document.getElementById('btnResetStaticPageDefault'),
+    staticPageWordCount: document.getElementById('staticPageWordCount'),
+    btnStaticPageVisual: document.getElementById('btnStaticPageVisual'),
+    btnStaticPageSource: document.getElementById('btnStaticPageSource'),
+    btnStaticPagePreview: document.getElementById('btnStaticPagePreview'),
+    staticPageRteToolbar: document.getElementById('staticPageRteToolbar'),
+    editStaticPageRichEditor: document.getElementById('editStaticPageRichEditor'),
+    editStaticPageHtmlSource: document.getElementById('editStaticPageHtmlSource'),
+    editStaticPagePreviewIframe: document.getElementById('editStaticPagePreviewIframe'),
+    editStaticPageDeployStatus: document.getElementById('editStaticPageDeployStatus'),
+    saveStaticPageBtn: document.getElementById('saveStaticPageBtn'),
+    btnSaveDeployStaticPageCf: document.getElementById('btnSaveDeployStaticPageCf'),
+    btnSaveDeployStaticPageGh: document.getElementById('btnSaveDeployStaticPageGh'),
 
     // Modal Editor
     postEditModal: document.getElementById('postEditModal'),
@@ -1340,6 +1373,7 @@
       renderPostsTable();
       populateCategoryFilter();
       populatePreviewSelect();
+      refreshStaticPages();
     } catch (err) {
       showToast(`Error fetching posts: ${err.message}`, 'error');
     }
@@ -1348,6 +1382,10 @@
   // Render Posts Catalog Table
 
   function renderPostsTable() {
+    if (DOM.catalogPostsCountTag) {
+      const count = state.posts.length;
+      DOM.catalogPostsCountTag.textContent = `${count} ${count === 1 ? 'post' : 'posts'}`;
+    }
     DOM.postsCatalogBody.innerHTML = '';
     if (state.posts.length === 0) {
       DOM.postsCatalogBody.innerHTML = `
@@ -1821,6 +1859,533 @@
           DOM.btnSaveHeadCode.disabled = false;
           DOM.btnSaveHeadCode.textContent = prevText;
         }
+      });
+    }
+  }
+
+  // =========================================================================
+  // 03 CATALOG — SITE PAGES (9 LEGAL & COMPANY PAGES) UPLOAD, EDIT & 2-OPTION DEPLOY
+  // =========================================================================
+  let staticPagesCache = [];
+  let staticPageEditorMode = 'visual'; // 'visual' | 'source' | 'preview'
+  let pendingQuickUploadSlug = '';
+
+  function setStaticPagesStatusBanner(msg, type = 'info', liveUrl = '') {
+    if (!DOM.staticPagesDeployStatus) return;
+    if (!msg) {
+      DOM.staticPagesDeployStatus.style.display = 'none';
+      DOM.staticPagesDeployStatus.innerHTML = '';
+      return;
+    }
+    DOM.staticPagesDeployStatus.style.display = 'flex';
+    DOM.staticPagesDeployStatus.className = `catalog-worker-status ${type}`;
+    const linkHtml = liveUrl
+      ? ` <a href="${escapeHtml(liveUrl)}" target="_blank" rel="noopener noreferrer" style="color:#7DD3FC;font-weight:600;text-decoration:underline;margin-left:0.5rem;">Open Live Page ↗</a>`
+      : '';
+    DOM.staticPagesDeployStatus.innerHTML = `<span>${escapeHtml(msg)}${linkHtml}</span>`;
+  }
+
+  function setStaticPageModalDeployStatus(msg, type = 'info', liveUrl = '') {
+    if (!DOM.editStaticPageDeployStatus) return;
+    if (!msg) {
+      DOM.editStaticPageDeployStatus.style.display = 'none';
+      DOM.editStaticPageDeployStatus.innerHTML = '';
+      return;
+    }
+    DOM.editStaticPageDeployStatus.style.display = 'block';
+    DOM.editStaticPageDeployStatus.className = `rte-deploy-status ${type}`;
+    const linkHtml = liveUrl
+      ? ` <a href="${escapeHtml(liveUrl)}" target="_blank" rel="noopener noreferrer" style="color:#7DD3FC;font-weight:600;text-decoration:underline;margin-left:0.4rem;">Open Live Page ↗</a>`
+      : '';
+    DOM.editStaticPageDeployStatus.innerHTML = `${escapeHtml(msg)}${linkHtml}`;
+  }
+
+  function updateStaticPageEditorWordCount() {
+    if (!DOM.staticPageWordCount) return;
+    const html = getStaticPageEditorHtml();
+    const tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    const text = (tmp.textContent || '').replace(/\s+/g, ' ').trim();
+    const words = text ? text.split(' ').filter(Boolean).length : 0;
+    DOM.staticPageWordCount.textContent = `${words} words · ${html.length} chars`;
+  }
+
+  function getStaticPageEditorHtml() {
+    if (staticPageEditorMode === 'source' && DOM.editStaticPageHtmlSource) {
+      return DOM.editStaticPageHtmlSource.value || '';
+    }
+    if (DOM.editStaticPageRichEditor) {
+      return DOM.editStaticPageRichEditor.innerHTML || '';
+    }
+    return DOM.editStaticPageHtmlSource ? DOM.editStaticPageHtmlSource.value || '' : '';
+  }
+
+  async function renderStaticPageModalPreview() {
+    if (!DOM.editStaticPagePreviewIframe || !DOM.editStaticPageSlug) return;
+    const slug = DOM.editStaticPageSlug.value;
+    if (!slug) return;
+    const bodyHtml = DOM.editStaticPageHtmlSource ? DOM.editStaticPageHtmlSource.value : getStaticPageEditorHtml();
+    try {
+      const res = await api(`/api/pages/${encodeURIComponent(slug)}/preview`, 'POST', {
+        title: DOM.editStaticPageTitle ? DOM.editStaticPageTitle.value.trim() : '',
+        description: DOM.editStaticPageDescription ? DOM.editStaticPageDescription.value.trim() : '',
+        body_html: bodyHtml,
+      });
+      if (res && res.html) {
+        DOM.editStaticPagePreviewIframe.srcdoc = res.html;
+      }
+    } catch (err) {
+      showToast(`Preview failed: ${err.message}`, 'error');
+    }
+  }
+
+  function setStaticPageEditorMode(mode) {
+    const prevMode = staticPageEditorMode;
+    // Sync current edits before switching
+    if (prevMode === 'visual' && DOM.editStaticPageRichEditor && DOM.editStaticPageHtmlSource) {
+      DOM.editStaticPageHtmlSource.value = DOM.editStaticPageRichEditor.innerHTML;
+    } else if (prevMode === 'source' && DOM.editStaticPageRichEditor && DOM.editStaticPageHtmlSource) {
+      DOM.editStaticPageRichEditor.innerHTML = DOM.editStaticPageHtmlSource.value;
+    }
+
+    staticPageEditorMode = mode;
+    if (DOM.btnStaticPageVisual) DOM.btnStaticPageVisual.classList.toggle('active', mode === 'visual');
+    if (DOM.btnStaticPageSource) DOM.btnStaticPageSource.classList.toggle('active', mode === 'source');
+    if (DOM.btnStaticPagePreview) DOM.btnStaticPagePreview.classList.toggle('active', mode === 'preview');
+
+    if (DOM.staticPageRteToolbar) DOM.staticPageRteToolbar.style.display = mode === 'visual' ? 'flex' : 'none';
+    if (DOM.editStaticPageRichEditor) DOM.editStaticPageRichEditor.style.display = mode === 'visual' ? 'block' : 'none';
+    if (DOM.editStaticPageHtmlSource) DOM.editStaticPageHtmlSource.style.display = mode === 'source' ? 'block' : 'none';
+    if (DOM.editStaticPagePreviewIframe) DOM.editStaticPagePreviewIframe.style.display = mode === 'preview' ? 'block' : 'none';
+
+    updateStaticPageEditorWordCount();
+    if (mode === 'preview') {
+      renderStaticPageModalPreview();
+    }
+  }
+
+  async function refreshStaticPages() {
+    if (!DOM.staticPagesBody) return;
+    try {
+      const res = await api('/api/pages');
+      staticPagesCache = Array.isArray(res.pages) ? res.pages : [];
+      if (DOM.catalogPagesStatusTag) {
+        const customCount = Number(res.custom_count || 0);
+        DOM.catalogPagesStatusTag.textContent = `${customCount}/${staticPagesCache.length} Custom`;
+        DOM.catalogPagesStatusTag.classList.toggle('has-code', customCount > 0);
+      }
+      renderStaticPagesTable();
+    } catch (err) {
+      DOM.staticPagesBody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:1.25rem;color:#FCA5A5;">Unable to load site pages: ${escapeHtml(err.message)}</td></tr>`;
+    }
+  }
+
+  function renderStaticPagesTable() {
+    if (!DOM.staticPagesBody) return;
+    DOM.staticPagesBody.innerHTML = '';
+    if (!staticPagesCache.length) {
+      DOM.staticPagesBody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:1.5rem;color:var(--text-secondary);">No site pages found.</td></tr>';
+      return;
+    }
+
+    staticPagesCache.forEach((page) => {
+      const tr = document.createElement('tr');
+      const badgeClass = page.is_custom ? 'badge-custom' : 'badge-synced';
+      const badgeLabel = page.is_custom ? 'CUSTOM HTML' : 'DEFAULT';
+      const updatedDisplay = page.updated_at ? String(page.updated_at).slice(0, 10) : 'Built-in';
+      const safeDesc = (page.description || '').slice(0, 96);
+
+      tr.innerHTML = `
+        <td><span class="badge ${badgeClass}">${badgeLabel}</span></td>
+        <td>
+          <div style="font-weight: 600; color: #F8FAFC;">${escapeHtml(page.label)}</div>
+          <code class="static-page-route-tag" style="margin-top: 0.2rem; display: inline-block;">${escapeHtml(page.web_path)}</code>
+        </td>
+        <td>
+          <div style="font-size: 0.8rem; font-weight: 600; color: #E2E8F0;">${escapeHtml(page.title)}</div>
+          <div style="font-size: 0.72rem; color: #94A3B8; margin-top: 0.12rem;">${escapeHtml(safeDesc)}</div>
+        </td>
+        <td style="font-size: 0.74rem; color: #CBD5E1; white-space: nowrap;">${page.word_count} words</td>
+        <td style="font-size: 0.74rem; color: #94A3B8; white-space: nowrap;">${escapeHtml(updatedDisplay)}</td>
+        <td>
+          <div class="static-page-actions">
+            <button type="button" class="btn btn-secondary btn-xs sp-upload-btn" data-slug="${escapeHtml(page.slug)}" title="Option 1: Upload an .html file for ${escapeHtml(page.label)}">⬆️ Upload HTML</button>
+            <button type="button" class="btn btn-secondary btn-xs sp-view-btn" data-slug="${escapeHtml(page.slug)}" title="View live themed render of ${escapeHtml(page.label)}">👁️ View</button>
+            <button type="button" class="btn btn-primary btn-xs sp-edit-btn" data-slug="${escapeHtml(page.slug)}" title="Option 2: Edit HTML/Visual content of ${escapeHtml(page.label)}">✏️ Edit</button>
+            <button type="button" class="btn btn-deploy-cf btn-xs sp-deploy-cf-btn" data-slug="${escapeHtml(page.slug)}" title="Deploy ONLY ${escapeHtml(page.web_path)} directly to Cloudflare Edge">🟧 CF</button>
+            <button type="button" class="btn btn-deploy-gh btn-xs sp-deploy-gh-btn" data-slug="${escapeHtml(page.slug)}" title="Push ONLY ${escapeHtml(page.web_path)} directly to GitHub Pages">🐙 GH</button>
+          </div>
+        </td>
+      `;
+      DOM.staticPagesBody.appendChild(tr);
+    });
+
+    DOM.staticPagesBody.querySelectorAll('.sp-upload-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        pendingQuickUploadSlug = btn.getAttribute('data-slug') || '';
+        if (DOM.staticPageQuickFileInput && pendingQuickUploadSlug) {
+          DOM.staticPageQuickFileInput.value = '';
+          DOM.staticPageQuickFileInput.click();
+        }
+      });
+    });
+
+    DOM.staticPagesBody.querySelectorAll('.sp-view-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const slug = btn.getAttribute('data-slug') || '';
+        if (slug) openStaticPageModal(slug, 'preview');
+      });
+    });
+
+    DOM.staticPagesBody.querySelectorAll('.sp-edit-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const slug = btn.getAttribute('data-slug') || '';
+        if (slug) openStaticPageModal(slug, 'visual');
+      });
+    });
+
+    DOM.staticPagesBody.querySelectorAll('.sp-deploy-cf-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const slug = btn.getAttribute('data-slug') || '';
+        if (slug) deployStaticPageDirect(slug, 'cloudflare', false, btn);
+      });
+    });
+
+    DOM.staticPagesBody.querySelectorAll('.sp-deploy-gh-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const slug = btn.getAttribute('data-slug') || '';
+        if (slug) deployStaticPageDirect(slug, 'github', false, btn);
+      });
+    });
+  }
+
+  function closeStaticPageModal() {
+    if (!DOM.staticPageEditModal) return;
+    DOM.staticPageEditModal.classList.remove('active');
+    setStaticPageModalDeployStatus('');
+  }
+
+  async function openStaticPageModal(slug, initialMode = 'visual') {
+    if (!DOM.staticPageEditModal) return;
+    try {
+      const res = await api(`/api/pages/${encodeURIComponent(slug)}`);
+      const page = res.page;
+      if (!page) return;
+      DOM.editStaticPageSlug.value = page.slug;
+      DOM.modalStaticPageTitle.textContent = `Site Page: ${page.label}`;
+      DOM.modalStaticPageRoute.textContent = page.web_path;
+      if (DOM.modalStaticPageStatusBadge) {
+        DOM.modalStaticPageStatusBadge.textContent = page.is_custom ? 'CUSTOM HTML' : 'DEFAULT';
+        DOM.modalStaticPageStatusBadge.className = `badge ${page.is_custom ? 'badge-custom' : 'badge-synced'}`;
+      }
+      DOM.editStaticPageTitle.value = page.title || page.label;
+      DOM.editStaticPageDescription.value = page.description || '';
+      DOM.editStaticPageRichEditor.innerHTML = page.body_html || '';
+      DOM.editStaticPageHtmlSource.value = page.body_html || '';
+      setStaticPageModalDeployStatus('');
+      staticPageEditorMode = 'visual';
+      DOM.staticPageEditModal.classList.add('active');
+      setStaticPageEditorMode(initialMode);
+    } catch (err) {
+      showToast(`Failed loading page '${slug}': ${err.message}`, 'error');
+    }
+  }
+
+  async function uploadHtmlFileIntoStaticPage(slug, file, openModalAfter = false) {
+    if (!slug || !file) return;
+    try {
+      const rawHtml = await file.text();
+      if (!rawHtml.trim()) {
+        showToast('The selected HTML file is empty.', 'error');
+        return;
+      }
+      const res = await api(`/api/pages/${encodeURIComponent(slug)}`, 'PUT', {
+        raw_html: rawHtml,
+      });
+      if (res && res.page) {
+        showToast(`Uploaded '${file.name}' into /${slug}/ (${res.page.word_count} words).`, 'success');
+        appendTerminalLog(`[SITE PAGE] Uploaded '${file.name}' into /${slug}/ (${res.page.char_count} chars).`, 'success');
+        setStaticPagesStatusBanner(
+          `Uploaded '${file.name}' to /${slug}/. Click 🟧 CF or 🐙 GH to deploy this page directly.`,
+          'success'
+        );
+        await refreshStaticPages();
+        if (openModalAfter && DOM.staticPageEditModal && DOM.staticPageEditModal.classList.contains('active')) {
+          DOM.editStaticPageTitle.value = res.page.title || '';
+          DOM.editStaticPageDescription.value = res.page.description || '';
+          DOM.editStaticPageRichEditor.innerHTML = res.page.body_html || '';
+          DOM.editStaticPageHtmlSource.value = res.page.body_html || '';
+          if (DOM.modalStaticPageStatusBadge) {
+            DOM.modalStaticPageStatusBadge.textContent = 'CUSTOM HTML';
+            DOM.modalStaticPageStatusBadge.className = 'badge badge-custom';
+          }
+          updateStaticPageEditorWordCount();
+          if (staticPageEditorMode === 'preview') {
+            renderStaticPageModalPreview();
+          }
+        }
+      }
+    } catch (err) {
+      showToast(`HTML upload failed: ${err.message}`, 'error');
+    }
+  }
+
+  async function saveStaticPageFromModal(e) {
+    if (e) e.preventDefault();
+    const slug = DOM.editStaticPageSlug ? DOM.editStaticPageSlug.value : '';
+    if (!slug) return;
+    const bodyHtml =
+      staticPageEditorMode === 'source'
+        ? DOM.editStaticPageHtmlSource.value
+        : staticPageEditorMode === 'visual'
+          ? DOM.editStaticPageRichEditor.innerHTML
+          : DOM.editStaticPageHtmlSource.value;
+    try {
+      const res = await api(`/api/pages/${encodeURIComponent(slug)}`, 'PUT', {
+        title: DOM.editStaticPageTitle.value.trim(),
+        description: DOM.editStaticPageDescription.value.trim(),
+        body_html: bodyHtml,
+      });
+      if (res && res.page) {
+        DOM.editStaticPageRichEditor.innerHTML = res.page.body_html;
+        DOM.editStaticPageHtmlSource.value = res.page.body_html;
+        if (DOM.modalStaticPageStatusBadge) {
+          DOM.modalStaticPageStatusBadge.textContent = 'CUSTOM HTML';
+          DOM.modalStaticPageStatusBadge.className = 'badge badge-custom';
+        }
+        updateStaticPageEditorWordCount();
+        showToast(`Saved /${slug}/ page changes.`, 'success');
+        setStaticPageModalDeployStatus(`Saved /${slug}/. Choose Deploy CF or Deploy GitHub to publish directly.`, 'success');
+        await refreshStaticPages();
+      }
+    } catch (err) {
+      showToast(`Save failed: ${err.message}`, 'error');
+      setStaticPageModalDeployStatus(`Save failed: ${err.message}`, 'error');
+    }
+  }
+
+  async function deployStaticPageDirect(slug, platform, fromModal = false, triggerBtn = null) {
+    if (!slug) return;
+    const label = platform === 'github' ? 'GitHub Pages' : 'Cloudflare Edge';
+    const prevText = triggerBtn ? triggerBtn.textContent : '';
+    if (triggerBtn) {
+      triggerBtn.disabled = true;
+      triggerBtn.textContent = 'Deploying...';
+    }
+    if (fromModal) {
+      setStaticPageModalDeployStatus(`Saving & deploying /${slug}/ directly to ${label}...`, 'info');
+    } else {
+      setStaticPagesStatusBanner(`Deploying /${slug}/ directly to ${label}...`, 'info');
+    }
+
+    try {
+      const payload = { platform };
+      if (fromModal) {
+        const bodyHtml =
+          staticPageEditorMode === 'source'
+            ? DOM.editStaticPageHtmlSource.value
+            : staticPageEditorMode === 'visual'
+              ? DOM.editStaticPageRichEditor.innerHTML
+              : DOM.editStaticPageHtmlSource.value;
+        payload.title = DOM.editStaticPageTitle.value.trim();
+        payload.description = DOM.editStaticPageDescription.value.trim();
+        payload.body_html = bodyHtml;
+      }
+
+      const res = await api(`/api/pages/${encodeURIComponent(slug)}/deploy`, 'POST', payload);
+      const liveUrl = res.page_url || res.live_url || '';
+      const msg = res.message || `Deployed /${slug}/ to ${label}.`;
+      showToast(msg, 'success');
+      appendTerminalLog(`[PAGE DEPLOY] ${msg}`, 'success');
+      if (fromModal) {
+        setStaticPageModalDeployStatus(msg, 'success', liveUrl);
+        if (res.page && DOM.modalStaticPageStatusBadge) {
+          DOM.modalStaticPageStatusBadge.textContent = res.page.is_custom ? 'CUSTOM HTML' : 'DEFAULT';
+          DOM.modalStaticPageStatusBadge.className = `badge ${res.page.is_custom ? 'badge-custom' : 'badge-synced'}`;
+        }
+      } else {
+        setStaticPagesStatusBanner(msg, 'success', liveUrl);
+      }
+      await refreshStaticPages();
+    } catch (err) {
+      const msg = `Deploy /${slug}/ to ${label} failed: ${err.message}`;
+      showToast(msg, 'error');
+      appendTerminalLog(`[PAGE DEPLOY ERROR] ${msg}`, 'error');
+      if (fromModal) setStaticPageModalDeployStatus(msg, 'error');
+      else setStaticPagesStatusBanner(msg, 'error');
+    } finally {
+      if (triggerBtn) {
+        triggerBtn.disabled = false;
+        triggerBtn.textContent = prevText;
+      }
+    }
+  }
+
+  async function deployAllStaticPagesDirect(platform, triggerBtn) {
+    const label = platform === 'github' ? 'GitHub Pages' : 'Cloudflare Edge';
+    const prevText = triggerBtn ? triggerBtn.textContent : '';
+    if (triggerBtn) {
+      triggerBtn.disabled = true;
+      triggerBtn.textContent = 'Deploying all 9...';
+    }
+    setStaticPagesStatusBanner(`Rebuilding & deploying all 9 site pages to ${label}...`, 'info');
+    try {
+      const res = await api('/api/pages/deploy-all', 'POST', { platform });
+      const liveUrl = res.page_url || res.live_url || '';
+      const msg = res.message || `Deployed all 9 site pages to ${label}.`;
+      showToast(msg, 'success');
+      appendTerminalLog(`[PAGE DEPLOY] ${msg}`, 'success');
+      setStaticPagesStatusBanner(msg, 'success', liveUrl);
+      await refreshStaticPages();
+    } catch (err) {
+      const msg = `Deploy all pages to ${label} failed: ${err.message}`;
+      showToast(msg, 'error');
+      appendTerminalLog(`[PAGE DEPLOY ERROR] ${msg}`, 'error');
+      setStaticPagesStatusBanner(msg, 'error');
+    } finally {
+      if (triggerBtn) {
+        triggerBtn.disabled = false;
+        triggerBtn.textContent = prevText;
+      }
+    }
+  }
+
+  function initCatalogStaticPages() {
+    // Sub-tab switcher inside 03 Catalog
+    const catalogSubtabs = document.querySelectorAll('.models-subtab-btn[data-catalog-panel]');
+    catalogSubtabs.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const targetId = btn.getAttribute('data-catalog-panel');
+        if (!targetId) return;
+        catalogSubtabs.forEach((b) => {
+          const isMatch = b === btn;
+          b.classList.toggle('active', isMatch);
+          b.setAttribute('aria-selected', isMatch ? 'true' : 'false');
+        });
+        document.querySelectorAll('.catalog-subpanel').forEach((panel) => {
+          panel.classList.toggle('active', panel.id === targetId);
+        });
+        if (targetId === 'catalogSubpanelPages') {
+          refreshStaticPages();
+        }
+      });
+    });
+
+    // Quick row HTML file upload
+    if (DOM.staticPageQuickFileInput) {
+      DOM.staticPageQuickFileInput.addEventListener('change', async () => {
+        const file = DOM.staticPageQuickFileInput.files && DOM.staticPageQuickFileInput.files[0];
+        const slug = pendingQuickUploadSlug;
+        pendingQuickUploadSlug = '';
+        if (file && slug) {
+          await uploadHtmlFileIntoStaticPage(slug, file, false);
+        }
+      });
+    }
+
+    // Modal HTML file upload
+    if (DOM.modalStaticPageFileInput) {
+      DOM.modalStaticPageFileInput.addEventListener('change', async () => {
+        const file = DOM.modalStaticPageFileInput.files && DOM.modalStaticPageFileInput.files[0];
+        const slug = DOM.editStaticPageSlug ? DOM.editStaticPageSlug.value : '';
+        DOM.modalStaticPageFileInput.value = '';
+        if (file && slug) {
+          await uploadHtmlFileIntoStaticPage(slug, file, true);
+        }
+      });
+    }
+
+    // Reset to default button
+    if (DOM.btnResetStaticPageDefault) {
+      DOM.btnResetStaticPageDefault.addEventListener('click', async () => {
+        const slug = DOM.editStaticPageSlug ? DOM.editStaticPageSlug.value : '';
+        if (!slug) return;
+        try {
+          const res = await api(`/api/pages/${encodeURIComponent(slug)}`, 'PUT', { reset: true });
+          if (res && res.page) {
+            DOM.editStaticPageTitle.value = res.page.title || '';
+            DOM.editStaticPageDescription.value = res.page.description || '';
+            DOM.editStaticPageRichEditor.innerHTML = res.page.body_html || '';
+            DOM.editStaticPageHtmlSource.value = res.page.body_html || '';
+            if (DOM.modalStaticPageStatusBadge) {
+              DOM.modalStaticPageStatusBadge.textContent = 'DEFAULT';
+              DOM.modalStaticPageStatusBadge.className = 'badge badge-synced';
+            }
+            updateStaticPageEditorWordCount();
+            if (staticPageEditorMode === 'preview') renderStaticPageModalPreview();
+            showToast(`Restored built-in default template for /${slug}/.`, 'info');
+            await refreshStaticPages();
+          }
+        } catch (err) {
+          showToast(`Reset failed: ${err.message}`, 'error');
+        }
+      });
+    }
+
+    // Editor formatting buttons
+    if (DOM.staticPageRteToolbar) {
+      DOM.staticPageRteToolbar.querySelectorAll('.rte-btn[data-sp-cmd]').forEach((btn) => {
+        btn.addEventListener('mousedown', (e) => e.preventDefault());
+        btn.addEventListener('click', () => {
+          if (staticPageEditorMode !== 'visual' || !DOM.editStaticPageRichEditor) return;
+          DOM.editStaticPageRichEditor.focus();
+          const cmd = btn.getAttribute('data-sp-cmd');
+          const val = btn.getAttribute('data-sp-val') || null;
+          if (cmd === 'formatBlock' && val) {
+            document.execCommand('formatBlock', false, `<${val}>`);
+          } else if (cmd) {
+            document.execCommand(cmd, false, val);
+          }
+          updateStaticPageEditorWordCount();
+        });
+      });
+    }
+
+    if (DOM.editStaticPageRichEditor) {
+      DOM.editStaticPageRichEditor.addEventListener('input', updateStaticPageEditorWordCount);
+    }
+    if (DOM.editStaticPageHtmlSource) {
+      DOM.editStaticPageHtmlSource.addEventListener('input', updateStaticPageEditorWordCount);
+    }
+
+    if (DOM.btnStaticPageVisual) DOM.btnStaticPageVisual.addEventListener('click', () => setStaticPageEditorMode('visual'));
+    if (DOM.btnStaticPageSource) DOM.btnStaticPageSource.addEventListener('click', () => setStaticPageEditorMode('source'));
+    if (DOM.btnStaticPagePreview) DOM.btnStaticPagePreview.addEventListener('click', () => setStaticPageEditorMode('preview'));
+
+    if (DOM.closeStaticPageModalBtn) DOM.closeStaticPageModalBtn.addEventListener('click', closeStaticPageModal);
+    if (DOM.cancelStaticPageModalBtn) DOM.cancelStaticPageModalBtn.addEventListener('click', closeStaticPageModal);
+    if (DOM.staticPageEditModal) {
+      DOM.staticPageEditModal.addEventListener('click', (e) => {
+        if (e.target === DOM.staticPageEditModal) closeStaticPageModal();
+      });
+    }
+    if (DOM.editStaticPageForm) {
+      DOM.editStaticPageForm.addEventListener('submit', saveStaticPageFromModal);
+    }
+
+    // Modal 2-option direct deploy buttons
+    if (DOM.btnSaveDeployStaticPageCf) {
+      DOM.btnSaveDeployStaticPageCf.addEventListener('click', () => {
+        const slug = DOM.editStaticPageSlug ? DOM.editStaticPageSlug.value : '';
+        if (slug) deployStaticPageDirect(slug, 'cloudflare', true, DOM.btnSaveDeployStaticPageCf);
+      });
+    }
+    if (DOM.btnSaveDeployStaticPageGh) {
+      DOM.btnSaveDeployStaticPageGh.addEventListener('click', () => {
+        const slug = DOM.editStaticPageSlug ? DOM.editStaticPageSlug.value : '';
+        if (slug) deployStaticPageDirect(slug, 'github', true, DOM.btnSaveDeployStaticPageGh);
+      });
+    }
+
+    // Bulk 2-option deploy all 9 pages buttons
+    if (DOM.btnDeployAllPagesCf) {
+      DOM.btnDeployAllPagesCf.addEventListener('click', () => {
+        deployAllStaticPagesDirect('cloudflare', DOM.btnDeployAllPagesCf);
+      });
+    }
+    if (DOM.btnDeployAllPagesGh) {
+      DOM.btnDeployAllPagesGh.addEventListener('click', () => {
+        deployAllStaticPagesDirect('github', DOM.btnDeployAllPagesGh);
       });
     }
   }
@@ -3103,10 +3668,14 @@
       if (e.key === 'Escape' && DOM.postEditModal.classList.contains('active')) {
         closePostEditModal();
       }
+      if (e.key === 'Escape' && DOM.staticPageEditModal && DOM.staticPageEditModal.classList.contains('active')) {
+        closeStaticPageModal();
+      }
     });
     DOM.editPostForm.addEventListener('submit', (e) => handlePostSave(e, false));
     initRichTextEditor();
     initModelsSubtabsAndHeadCode();
+    initCatalogStaticPages();
 
     // Preview Events
     DOM.previewPostSelect.addEventListener('change', () => {
