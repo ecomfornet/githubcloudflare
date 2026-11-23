@@ -92,6 +92,34 @@ export function sanitizeStaticPageHtml(rawHtml: string): string {
 
   root.find('script, style, noscript, iframe, object, embed, applet, base, meta, link').remove();
 
+  // Pass 1: Structural normalization (convert <h1> -> <h2> and unwrap disallowed tags) BEFORE attribute sanitization
+  // so that nested children inside <h1> or custom wrapper tags are always visited in Pass 2.
+  for (let pass = 0; pass < 8; pass += 1) {
+    let mutated = false;
+    root.find('*').each((_, node) => {
+      const el = $(node);
+      const tagName = (
+        (node as { tagName?: string; name?: string }).tagName ||
+        (node as { name?: string }).name ||
+        ''
+      ).toLowerCase();
+      if (!tagName) return;
+
+      if (tagName === 'h1') {
+        el.replaceWith($('<h2></h2>').append(el.contents()));
+        mutated = true;
+        return;
+      }
+
+      if (!STATIC_PAGE_ALLOWED_TAGS.has(tagName)) {
+        el.replaceWith(el.contents());
+        mutated = true;
+      }
+    });
+    if (!mutated) break;
+  }
+
+  // Pass 2: Sanitize attributes and URLs on all surviving allowed elements
   root.find('*').each((_, node) => {
     const el = $(node);
     const tagName = (
@@ -99,17 +127,7 @@ export function sanitizeStaticPageHtml(rawHtml: string): string {
       (node as { name?: string }).name ||
       ''
     ).toLowerCase();
-    if (!tagName) return;
-
-    if (tagName === 'h1') {
-      el.replaceWith(`<h2>${el.html() || ''}</h2>`);
-      return;
-    }
-
-    if (!STATIC_PAGE_ALLOWED_TAGS.has(tagName)) {
-      el.replaceWith(el.contents());
-      return;
-    }
+    if (!tagName || !STATIC_PAGE_ALLOWED_TAGS.has(tagName)) return;
 
     const rawAttribs = (node as { attribs?: Record<string, string> }).attribs || {};
     for (const [attrName, attrVal] of Object.entries(rawAttribs)) {

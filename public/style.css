@@ -2194,4 +2194,47 @@ textarea.form-control {
   display: block;
 }
 
+/* Mobile viewport containment (<= 768px): keep wide tables scrollable inside their wrapper without document overflow */
+@media (max-width: 768px) {
+  html,
+  body {
+    max-width: 100%;
+    overflow-x: clip;
+  }
+
+  .app-header,
+  .app-header-top,
+  .app-header-telemetry,
+  .stepper-section,
+  .app-main,
+  .tab-pane,
+  .card,
+  .saas-card {
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .app-header-top,
+  .app-header-telemetry,
+  .pipeline-stepper,
+  .models-subtab-bar,
+  .catalog-toolbar,
+  .step-nav-footer,
+  .header-project-bar {
+    flex-wrap: wrap;
+  }
+
+  .table-container {
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .dashboard-grid.two-cols,
+  .operations-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+
 

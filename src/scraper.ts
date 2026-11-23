@@ -440,16 +440,33 @@ export function sanitizeArticleHtml(rawHtml: string, baseUrl: string, pageTitle 
     }
   });
 
-  // Resolve and clean every element
+  // Pass 1: Normalize remaining <h1> and unwrap disallowed tags BEFORE attribute sanitization
+  for (let pass = 0; pass < 8; pass += 1) {
+    let mutated = false;
+    root.find('*').each((_, node) => {
+      const el = $(node);
+      const tagName = ((node as { tagName?: string; name?: string }).tagName || (node as { name?: string }).name || '').toLowerCase();
+      if (!tagName) return;
+
+      if (tagName === 'h1') {
+        el.replaceWith($('<h2></h2>').append(el.contents()));
+        mutated = true;
+        return;
+      }
+
+      if (!ALLOWED_TAGS.has(tagName)) {
+        el.replaceWith(el.contents());
+        mutated = true;
+      }
+    });
+    if (!mutated) break;
+  }
+
+  // Pass 2: Resolve and clean attributes on every surviving allowed element
   root.find('*').each((_, node) => {
     const el = $(node);
     const tagName = ((node as { tagName?: string; name?: string }).tagName || (node as { name?: string }).name || '').toLowerCase();
-    if (!tagName) return;
-
-    if (!ALLOWED_TAGS.has(tagName)) {
-      el.replaceWith(el.contents());
-      return;
-    }
+    if (!tagName || !ALLOWED_TAGS.has(tagName)) return;
 
     if (tagName === 'img') {
       const imgUrl = extractImageUrlFromImgEl(el, baseUrl);
@@ -537,6 +554,33 @@ export function sanitizeEditedHtml(rawHtml: string): string {
     .find('script, style, noscript, iframe, object, embed, form, input, button, select, textarea, svg')
     .remove();
 
+  // Pass 1: Structural normalization (convert <h1> -> <h2> and unwrap disallowed tags) BEFORE attribute sanitization
+  for (let pass = 0; pass < 8; pass += 1) {
+    let mutated = false;
+    root.find('*').each((_, node) => {
+      const el = $(node);
+      const tagName = (
+        (node as { tagName?: string; name?: string }).tagName ||
+        (node as { name?: string }).name ||
+        ''
+      ).toLowerCase();
+      if (!tagName) return;
+
+      if (tagName === 'h1') {
+        el.replaceWith($('<h2></h2>').append(el.contents()));
+        mutated = true;
+        return;
+      }
+
+      if (!ALLOWED_TAGS.has(tagName)) {
+        el.replaceWith(el.contents());
+        mutated = true;
+      }
+    });
+    if (!mutated) break;
+  }
+
+  // Pass 2: Sanitize attributes on all surviving allowed elements
   root.find('*').each((_, node) => {
     const el = $(node);
     const tagName = (
@@ -544,17 +588,7 @@ export function sanitizeEditedHtml(rawHtml: string): string {
       (node as { name?: string }).name ||
       ''
     ).toLowerCase();
-    if (!tagName) return;
-
-    if (tagName === 'h1') {
-      el.replaceWith(`<h2>${el.html() || ''}</h2>`);
-      return;
-    }
-
-    if (!ALLOWED_TAGS.has(tagName)) {
-      el.replaceWith(el.contents());
-      return;
-    }
+    if (!tagName || !ALLOWED_TAGS.has(tagName)) return;
 
     const rawAttribs = (node as { attribs?: Record<string, string> }).attribs || {};
 

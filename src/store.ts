@@ -674,26 +674,35 @@ export class DashboardStore {
   }
 
   clearActiveProjectData(projectId?: string): Record<string, unknown> {
-    const requestedPid = (projectId || this.activeProjectId || '').trim();
-    const pid = this.projects[requestedPid] ? requestedPid : this.activeProjectId;
+    const explicitPid = typeof projectId === 'string' ? projectId.trim() : '';
+    const pid = explicitPid || (this.activeProjectId || '').trim();
     if (!pid || !this.projects[pid]) {
-      throw new Error(`Project '${requestedPid}' not found.`);
+      throw new Error(`Project '${pid || explicitPid}' not found.`);
     }
     if (this.ingestJob.status === 'running') {
       this.stopIngestJob();
     }
 
-    const removedPosts = Object.keys(this.manifest.posts).length;
-    const removedCategories = this.manifest.categories.length;
+    const isClearingActive = pid === this.activeProjectId;
+    const targetManifestPath = isClearingActive ? this.activeManifestPath : this.resolveManifestPath(pid);
+    const existingManifest = isClearingActive ? this.manifest : this.loadManifestFile(targetManifestPath);
+    const removedPosts = Object.keys(existingManifest.posts || {}).length;
+    const removedCategories = (existingManifest.categories || []).length;
 
-    // 1. Reset active manifest in memory & on disk
-    this.manifest = {
+    // 1. Reset target project manifest in memory (if active) & on disk
+    const emptyManifest: Manifest = {
       version: '2.0',
       updated_at: new Date().toISOString(),
       posts: {},
       categories: [],
     };
-    this.saveManifest();
+    if (isClearingActive) {
+      this.manifest = emptyManifest;
+      this.saveManifest();
+    } else {
+      fs.mkdirSync(path.dirname(targetManifestPath), { recursive: true });
+      fs.writeFileSync(targetManifestPath, JSON.stringify(emptyManifest, null, 2), 'utf-8');
+    }
 
     // 2. Clean scraped_data/<pid>/html (strictly confined inside workspace scraped_data)
     const scrapedBase = path.resolve(this.workspaceDir, 'scraped_data');
@@ -833,7 +842,7 @@ export class DashboardStore {
       cf_output_dir: this.resolveOutputDir('cloudflare').outputDir,
       gh_output_dir: this.resolveOutputDir('github').outputDir,
       available_themes: Object.keys(THEMES),
-      available_routing_modes: ['single', 'category_slug', 'parent_slug', 'silo_nested'],
+      available_routing_modes: ['single', 'category_slug', 'parent_slug', 'silo_nested', 'pseo_nested_silo'],
       branding: this.config.branding,
     };
   }
@@ -1805,6 +1814,13 @@ export class DashboardStore {
         }
         if (post.content_html) {
           for (const m of post.content_html.matchAll(/\/assets\/images\/([a-zA-Z0-9._-]+)/g)) {
+            referenced.add(m[1]);
+          }
+        }
+      }
+      for (const override of Object.values(this.staticPageOverrides)) {
+        if (override && override.body_html) {
+          for (const m of override.body_html.matchAll(/\/assets\/images\/([a-zA-Z0-9._-]+)/g)) {
             referenced.add(m[1]);
           }
         }
@@ -3629,6 +3645,10 @@ export class DashboardStore {
     const bySlug = new Map(trustPages.map((p) => [p.slug, p]));
 
     const changedFiles: string[] = [];
+    const srcAssets = path.join(this.workspaceDir, 'assets', 'images');
+    const dstAssets = path.join(outputDir, 'assets', 'images');
+    const copiedAssetNames = new Set<string>();
+
     for (const slug of validSlugs) {
       const page = bySlug.get(slug);
       if (!page) continue;
@@ -3643,6 +3663,21 @@ export class DashboardStore {
       });
       fs.writeFileSync(path.join(pageDir, 'index.html'), html, 'utf-8');
       changedFiles.push(`${slug}/index.html`);
+
+      // Also sync any local /assets/images/* embedded inside custom static page HTML
+      if (fs.existsSync(srcAssets) && page.bodyHtml) {
+        for (const match of page.bodyHtml.matchAll(/\/assets\/images\/([a-zA-Z0-9._-]+)/g)) {
+          const fname = match[1];
+          if (!fname || copiedAssetNames.has(fname)) continue;
+          const srcFile = path.join(srcAssets, fname);
+          if (fs.existsSync(srcFile) && fs.statSync(srcFile).isFile()) {
+            fs.mkdirSync(dstAssets, { recursive: true });
+            fs.copyFileSync(srcFile, path.join(dstAssets, fname));
+            copiedAssetNames.add(fname);
+            changedFiles.push(`assets/images/${fname}`);
+          }
+        }
+      }
     }
 
     return { outputDir, token, changedFiles, fullBootstrap };

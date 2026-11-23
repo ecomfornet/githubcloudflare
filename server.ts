@@ -99,8 +99,12 @@ export function createApp() {
   });
 
   app.post('/api/config', (req, res) => {
-    const updated = store.updateConfig((req.body || {}) as Record<string, unknown>);
-    res.json({ success: true, config: updated });
+    try {
+      const updated = store.updateConfig((req.body || {}) as Record<string, unknown>);
+      res.json({ success: true, config: updated });
+    } catch (err) {
+      res.status(400).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+    }
   });
 
   app.post('/api/upload-logo', (req, res) => {
@@ -224,35 +228,47 @@ export function createApp() {
 
   // --- Live Theme Preview ---
   app.post('/api/preview', (req, res) => {
-    const body = (req.body || {}) as Record<string, unknown>;
-    const html = store.renderPreview({
-      slug: typeof body.slug === 'string' ? body.slug : undefined,
-      postData: body.post && typeof body.post === 'object' ? (body.post as Record<string, unknown>) : undefined,
-      theme: typeof body.theme === 'string' ? body.theme : undefined,
-      routingMode:
-        typeof (body.route_structure || body.routing_mode) === 'string'
-          ? String(body.route_structure || body.routing_mode)
-          : undefined,
-      viewMode:
-        typeof (body.view_mode || body.type) === 'string' ? String(body.view_mode || body.type) : undefined,
-    });
-    res.json({ success: true, html });
+    try {
+      const body = (req.body || {}) as Record<string, unknown>;
+      const html = store.renderPreview({
+        slug: typeof body.slug === 'string' ? body.slug : undefined,
+        postData: body.post && typeof body.post === 'object' ? (body.post as Record<string, unknown>) : undefined,
+        theme: typeof body.theme === 'string' ? body.theme : undefined,
+        routingMode:
+          typeof (body.route_structure || body.routing_mode) === 'string'
+            ? String(body.route_structure || body.routing_mode)
+            : undefined,
+        viewMode:
+          typeof (body.view_mode || body.type) === 'string' ? String(body.view_mode || body.type) : undefined,
+      });
+      res.json({ success: true, html });
+    } catch (err) {
+      res.status(400).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+    }
   });
 
   // --- Ingestion & Sitemap Scan ---
   app.post('/api/sitemap/scan', async (req, res) => {
-    const body = (req.body || {}) as Record<string, unknown>;
-    const parsedMax = body.max_posts !== undefined && body.max_posts !== '' ? Number(body.max_posts) : undefined;
-    const result = await store.scanSitemap(
-      typeof body.url_or_list === 'string' ? body.url_or_list : undefined,
-      typeof body.source_type === 'string' ? body.source_type : 'sitemap',
-      parsedMax !== undefined && Number.isFinite(parsedMax) ? parsedMax : undefined
-    );
-    res.json(result);
+    try {
+      const body = (req.body || {}) as Record<string, unknown>;
+      const parsedMax = body.max_posts !== undefined && body.max_posts !== '' ? Number(body.max_posts) : undefined;
+      const result = await store.scanSitemap(
+        typeof body.url_or_list === 'string' ? body.url_or_list : undefined,
+        typeof body.source_type === 'string' ? body.source_type : 'sitemap',
+        parsedMax !== undefined && Number.isFinite(parsedMax) ? parsedMax : undefined
+      );
+      res.json(result);
+    } catch (err) {
+      res.status(400).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+    }
   });
 
   app.post('/api/ingest', (req, res) => {
-    res.json(store.startIngestJob((req.body || {}) as Record<string, unknown>));
+    try {
+      res.json(store.startIngestJob((req.body || {}) as Record<string, unknown>));
+    } catch (err) {
+      res.status(400).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+    }
   });
 
   app.post('/api/ingest/stop', (_req, res) => {
@@ -264,26 +280,34 @@ export function createApp() {
   });
 
   app.post('/api/projects/clear', (req, res) => {
-    const body = (req.body || {}) as Record<string, unknown>;
-    const projectId = typeof body.project_id === 'string' ? body.project_id : undefined;
-    res.json(store.clearActiveProjectData(projectId));
+    try {
+      const body = (req.body || {}) as Record<string, unknown>;
+      const projectId = typeof body.project_id === 'string' ? body.project_id : undefined;
+      res.json(store.clearActiveProjectData(projectId));
+    } catch (err) {
+      res.status(400).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+    }
   });
 
   // --- Static Build & Assets ---
   app.post('/api/build', (req, res) => {
-    const body = (req.body || {}) as Record<string, unknown>;
-    const result = store.runBuild({
-      clean: body.clean !== false,
-      targetCloud: typeof (body.target_cloud || body.platform) === 'string' ? String(body.target_cloud || body.platform) : undefined,
-      projectName:
-        typeof (body.project_name || body.subdomain || body.worker_name) === 'string'
-          ? String(body.project_name || body.subdomain || body.worker_name)
-          : undefined,
-      subdomain: typeof body.subdomain === 'string' ? body.subdomain : undefined,
-      theme: typeof body.theme === 'string' ? body.theme : undefined,
-      routingMode: typeof body.routing_mode === 'string' ? body.routing_mode : undefined,
-    });
-    res.json(result);
+    try {
+      const body = (req.body || {}) as Record<string, unknown>;
+      const result = store.runBuild({
+        clean: body.clean !== false,
+        targetCloud: typeof (body.target_cloud || body.platform) === 'string' ? String(body.target_cloud || body.platform) : undefined,
+        projectName:
+          typeof (body.project_name || body.subdomain || body.worker_name) === 'string'
+            ? String(body.project_name || body.subdomain || body.worker_name)
+            : undefined,
+        subdomain: typeof body.subdomain === 'string' ? body.subdomain : undefined,
+        theme: typeof body.theme === 'string' ? body.theme : undefined,
+        routingMode: typeof body.routing_mode === 'string' ? body.routing_mode : undefined,
+      });
+      res.json(result);
+    } catch (err) {
+      res.status(400).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+    }
   });
 
   app.post('/api/assets/sync', async (req, res) => {
@@ -314,17 +338,21 @@ export function createApp() {
   });
 
   app.post('/api/cloudflare/deploy', (req, res) => {
-    const body = (req.body || {}) as Record<string, unknown>;
-    res.json(
-      store.startCloudflareDeploy({
-        dryRun: Boolean(body.dry_run),
-        subdomain:
-          typeof (body.subdomain || body.project_name || body.worker_name) === 'string'
-            ? String(body.subdomain || body.project_name || body.worker_name)
-            : undefined,
-        theme: typeof body.theme === 'string' ? body.theme : undefined,
-      })
-    );
+    try {
+      const body = (req.body || {}) as Record<string, unknown>;
+      res.json(
+        store.startCloudflareDeploy({
+          dryRun: Boolean(body.dry_run),
+          subdomain:
+            typeof (body.subdomain || body.project_name || body.worker_name) === 'string'
+              ? String(body.subdomain || body.project_name || body.worker_name)
+              : undefined,
+          theme: typeof body.theme === 'string' ? body.theme : undefined,
+        })
+      );
+    } catch (err) {
+      res.status(400).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+    }
   });
 
   app.post('/api/cloudflare/fetch-posts', async (req, res) => {
@@ -354,16 +382,20 @@ export function createApp() {
   });
 
   app.post('/api/deploy', (req, res) => {
-    const body = (req.body || {}) as Record<string, unknown>;
-    res.json(
-      store.startGitHubDeploy({
-        dryRun: Boolean(body.dry_run),
-        projectName:
-          typeof (body.project_name || body.subdomain || body.owner) === 'string'
-            ? String(body.project_name || body.subdomain || body.owner)
-            : undefined,
-      })
-    );
+    try {
+      const body = (req.body || {}) as Record<string, unknown>;
+      res.json(
+        store.startGitHubDeploy({
+          dryRun: Boolean(body.dry_run),
+          projectName:
+            typeof (body.project_name || body.subdomain || body.owner) === 'string'
+              ? String(body.project_name || body.subdomain || body.owner)
+              : undefined,
+        })
+      );
+    } catch (err) {
+      res.status(400).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+    }
   });
 
   async function handleGitHubOrgs(rawToken: string, res: express.Response) {

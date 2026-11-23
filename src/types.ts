@@ -236,11 +236,14 @@ export function getCloudflareLiveUrl(cf: CloudflareConfig): string {
   return `https://${proj}.workers.dev`;
 }
 
-export function normalizeRoutingMode(mode?: string): 'single' | 'category_slug' | 'parent_slug' | 'silo_nested' {
+export function normalizeRoutingMode(
+  mode?: string
+): 'single' | 'category_slug' | 'parent_slug' | 'silo_nested' | 'pseo_nested_silo' {
   const m = String(mode || 'single').trim().toLowerCase();
   if (m === 'category_slug' || m === 'category') return 'category_slug';
   if (m === 'parent_slug' || m === 'parent') return 'parent_slug';
   if (m === 'silo_nested' || m === 'silo') return 'silo_nested';
+  if (m === 'pseo_nested_silo' || m === 'pseo_silo' || m === 'blog_slug') return 'pseo_nested_silo';
   return 'single';
 }
 
@@ -268,6 +271,9 @@ export function resolvePostRoute(
     segments = ['guides', catSlug, slug];
     breadcrumbs.push({ name: 'Guides', url: `${prefix}/guides/` });
     breadcrumbs.push({ name: post.category || catSlug, url: `${prefix}/guides/${catSlug}/` });
+  } else if (mode === 'pseo_nested_silo') {
+    segments = ['blog', slug];
+    breadcrumbs.push({ name: post.category || catSlug, url: `${prefix}/category/${catSlug}/` });
   } else {
     segments = [slug];
   }

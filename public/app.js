@@ -334,7 +334,7 @@
       headers: { 'Content-Type': 'application/json' },
     };
 
-    if (data && (method === 'POST' || method === 'PUT')) {
+    if (data && (method === 'POST' || method === 'PUT' || method === 'DELETE' || method === 'PATCH')) {
       opts.body = JSON.stringify(data);
     }
 
@@ -1879,8 +1879,9 @@
     }
     DOM.staticPagesDeployStatus.style.display = 'flex';
     DOM.staticPagesDeployStatus.className = `catalog-worker-status ${type}`;
-    const linkHtml = liveUrl
-      ? ` <a href="${escapeHtml(liveUrl)}" target="_blank" rel="noopener noreferrer" style="color:#7DD3FC;font-weight:600;text-decoration:underline;margin-left:0.5rem;">Open Live Page ↗</a>`
+    const safeLiveUrl = /^https?:\/\//i.test(String(liveUrl || '')) ? escapeHtml(liveUrl) : '';
+    const linkHtml = safeLiveUrl
+      ? ` <a href="${safeLiveUrl}" target="_blank" rel="noopener noreferrer" style="color:#7DD3FC;font-weight:600;text-decoration:underline;margin-left:0.5rem;">Open Live Page ↗</a>`
       : '';
     DOM.staticPagesDeployStatus.innerHTML = `<span>${escapeHtml(msg)}${linkHtml}</span>`;
   }
@@ -1894,8 +1895,9 @@
     }
     DOM.editStaticPageDeployStatus.style.display = 'block';
     DOM.editStaticPageDeployStatus.className = `rte-deploy-status ${type}`;
-    const linkHtml = liveUrl
-      ? ` <a href="${escapeHtml(liveUrl)}" target="_blank" rel="noopener noreferrer" style="color:#7DD3FC;font-weight:600;text-decoration:underline;margin-left:0.4rem;">Open Live Page ↗</a>`
+    const safeLiveUrl = /^https?:\/\//i.test(String(liveUrl || '')) ? escapeHtml(liveUrl) : '';
+    const linkHtml = safeLiveUrl
+      ? ` <a href="${safeLiveUrl}" target="_blank" rel="noopener noreferrer" style="color:#7DD3FC;font-weight:600;text-decoration:underline;margin-left:0.4rem;">Open Live Page ↗</a>`
       : '';
     DOM.editStaticPageDeployStatus.innerHTML = `${escapeHtml(msg)}${linkHtml}`;
   }
@@ -2865,12 +2867,17 @@
     }
 
     const repo = (DOM.cfgStep1GithubRepo && DOM.cfgStep1GithubRepo.value || '').trim();
+    const safeOwner = owner.replace(/[^a-zA-Z0-9._-]/g, '');
+    const safeRepo = repo.replace(/[^a-zA-Z0-9._-]/g, '');
     let previewHtml = '';
-    if (repo.endsWith('.github.io') || (!repo && owner)) {
-      const domain = repo.endsWith('.github.io') ? repo : `${owner}.github.io`;
-      previewHtml = `Target: <a href="https://${domain}" target="_blank" rel="noopener" style="color:#34D399;font-weight:bold;text-decoration:none;">https://${domain}/</a>`;
-    } else if (owner && repo) {
-      previewHtml = `Target: <a href="https://${owner}.github.io/${repo}/" target="_blank" rel="noopener" style="color:#38BDF8;font-weight:bold;text-decoration:none;">https://${owner}.github.io/${repo}/</a>`;
+    if (safeRepo.endsWith('.github.io') || (!safeRepo && safeOwner)) {
+      const domain = safeRepo.endsWith('.github.io') ? safeRepo : `${safeOwner}.github.io`;
+      const escDomain = escapeHtml(domain);
+      previewHtml = `Target: <a href="https://${escDomain}" target="_blank" rel="noopener noreferrer" style="color:#34D399;font-weight:bold;text-decoration:none;">https://${escDomain}/</a>`;
+    } else if (safeOwner && safeRepo) {
+      const escOwner = escapeHtml(safeOwner);
+      const escRepo = escapeHtml(safeRepo);
+      previewHtml = `Target: <a href="https://${escOwner}.github.io/${escRepo}/" target="_blank" rel="noopener noreferrer" style="color:#38BDF8;font-weight:bold;text-decoration:none;">https://${escOwner}.github.io/${escRepo}/</a>`;
     } else {
       previewHtml = 'Target: https://&lt;org&gt;.github.io/';
     }
@@ -3830,6 +3837,7 @@
         'category_slug': 'Category Slug (/<category>/<slug>/)',
         'parent_slug': 'Parent Slug (/<parent>/<slug>/)',
         'silo_nested': 'Silo Nested (/guides/<parent>/<slug>/)',
+        'pseo_nested_silo': 'pSEO Silo (/blog/<slug>/ + /category/<cat>/)',
       };
 
       if (DOM.templateModalThemeBadge) {
@@ -3928,7 +3936,7 @@
 
     // "Apply This Theme" inside Preview Modal
     if (DOM.applyTemplateThemeBtn) {
-      DOM.applyTemplateThemeBtn.addEventListener('click', () => {
+      DOM.applyTemplateThemeBtn.addEventListener('click', async () => {
         const chosen = state.modalActiveTheme || 'nordic-studio';
         syncThemeToUI(chosen);
         const curProj = state.projects && state.projects.find((p) => p.id === state.activeProject);
@@ -3937,12 +3945,14 @@
         if (state.status) state.status.theme = chosen;
         try {
           if (state.activeProject) {
-            api('/api/projects/update', 'POST', { project_id: state.activeProject, theme: chosen });
+            await api('/api/projects/update', 'POST', { project_id: state.activeProject, theme: chosen });
           }
-          api('/api/config', 'POST', { build: { theme: chosen } });
-        } catch (e) {}
+          await api('/api/config', 'POST', { build: { theme: chosen } });
+          showToast(`Theme applied & saved: ${chosen}.`, 'success');
+        } catch (err) {
+          showToast(`Theme applied locally, but save failed: ${err.message}`, 'warning');
+        }
         if (DOM.templatePreviewModal) DOM.templatePreviewModal.classList.remove('active');
-        showToast(`Theme applied: ${chosen}. Click 'Save Generation Settings' to persist.`, 'success');
       });
 
     }

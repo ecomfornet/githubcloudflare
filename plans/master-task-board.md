@@ -36,4 +36,16 @@
 | `public/index.html`, `public/style.css`, `public/app.js` | Segmented sub-tab `Site Pages (9)`, per-page HTML upload, Visual/HTML/Live Preview modal, direct Cloudflare & GitHub single + bulk deploy | Verified live in Chromium (0 console errors) |
 | `src/store.test.ts` | Test #17 covering all 9 pages, HTML extraction/XSS stripping, persistence, project isolation, CF & GH incremental/bulk deploy | 17/17 passing |
 
+## Full-Project Audit & End-to-End Testing Log
+
+| File Path | Key Exports / Changes | Verification Status |
+|---|---|---|
+| `src/types.ts` | Added full `pseo_nested_silo` support (`/blog/<slug>/` + `/category/<cat>/` breadcrumb) in `normalizeRoutingMode` & `resolvePostRoute` | Verified (18/18 unit tests) |
+| `src/static-pages.ts` & `src/scraper.ts` | Hardened `sanitizeStaticPageHtml`, `sanitizeEditedHtml`, and `sanitizeArticleHtml` with multi-pass DOM tag normalization before attribute sanitization | Verified (18/18 unit tests) |
+| `src/store.ts` | Fixed `clearActiveProjectData` invalid-project guard (preventing fallback wipe of active project), added `pseo_nested_silo` to status, synced local `/assets/images/*` referenced in custom Site Pages during full & incremental builds | Verified (18/18 unit tests + 25 live API checks) |
+| `server.ts` | Wrapped synchronous POST routes (`/api/config`, `/api/preview`, `/api/sitemap/scan`, `/api/ingest`, `/api/projects/clear`, `/api/build`, `/api/cloudflare/deploy`, `/api/deploy`) with JSON `try/catch` guards | Verified (25 live API checks) |
+| `public/app.js`, `public/index.html`, `public/style.css` | Fixed `api()` JSON body forwarding on `DELETE`/`PATCH`, validated URL schemes & escaped GitHub preview inputs, added `pseo_nested_silo` option/label, awaited async theme modal saves, and fixed mobile `390x844` horizontal overflow containment | Verified (`node --check` + Desktop & Mobile Chromium E2E, 0 console/page/network errors) |
+| `src/store.test.ts` | Added Test #18 covering `pseo_nested_silo`, nested sanitization across all 3 sanitizers, static-page local image build sync, and `clearActiveProjectData` invalid-ID guard | 18/18 passing |
+
+
 

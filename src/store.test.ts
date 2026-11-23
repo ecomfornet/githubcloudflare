@@ -1218,11 +1218,10 @@ test('security & stability audit: blocks IPv4-mapped IPv6 & private worker URLs,
     assert.match(hubHtml, /data-feedback="Thanks for subscribing to/);
     assert.match(hubHtml, /this\.dataset\.feedback/);
 
-    // 6. clearActiveProjectData cannot traverse outside scraped_data even if passed '..'
+    // 6. clearActiveProjectData rejects invalid/traversal project IDs and never touches files outside scraped_data
     const outsideMarker = path.join(tmpDir, 'do-not-delete.txt');
     fs.writeFileSync(outsideMarker, 'keep', 'utf-8');
-    const clearRes = store.clearActiveProjectData('../../outside');
-    assert.equal(clearRes.success, true);
+    assert.throws(() => store.clearActiveProjectData('../../outside'), /not found/);
     assert.equal(fs.existsSync(outsideMarker), true);
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -1518,5 +1517,100 @@ test('Site Pages Manager (9 legal/company pages): HTML upload extraction & sanit
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
+
+test('full-project audit regressions: pseo_nested_silo routing, nested XSS stripping inside H1/custom tags across all sanitizers, and static-page local image build sync', async () => {
+  const { sanitizeStaticPageHtml } = await import('./static-pages.ts');
+  const { sanitizeEditedHtml, sanitizeArticleHtml } = await import('./scraper.ts');
+
+  // 1. pseo_nested_silo routing mode
+  assert.equal(normalizeRoutingMode('pseo_nested_silo'), 'pseo_nested_silo');
+  const route = resolvePostRoute(
+    {
+      slug: 'sunlit-coffee-bar',
+      title: 'Sunlit Coffee Bar',
+      category: 'Kitchen Ideas',
+      category_slug: 'kitchen-ideas',
+      parent_slug: 'kitchen',
+    },
+    'pseo_nested_silo'
+  );
+  assert.equal(route.web_path, '/blog/sunlit-coffee-bar/');
+  assert.equal(route.file_path, 'blog/sunlit-coffee-bar/index.html');
+  assert.equal(route.breadcrumbs[1]?.url, '/category/kitchen-ideas/');
+
+  // 2. Nested dangerous attributes inside <h1> and disallowed wrapper tags must be stripped in ALL 3 sanitizers
+  const nestedAttack = `
+    <h1><img src="/assets/images/logo.webp" onerror="alert('h1')" alt="ok" /><a href="javascript:alert('h1link')">Heading Link</a></h1>
+    <custom-wrapper><inner-tag><a href="javascript:alert('nested')" onclick="evil()">Bad</a><img src="https://example.com/a.webp" onload="evil2()" alt="safe" /></inner-tag></custom-wrapper>
+  `;
+
+  const cleanStatic = sanitizeStaticPageHtml(nestedAttack);
+  assert.match(cleanStatic, /<h2>/);
+  assert.equal(cleanStatic.includes('onerror='), false);
+  assert.equal(cleanStatic.includes('onload='), false);
+  assert.equal(cleanStatic.includes('onclick='), false);
+  assert.equal(cleanStatic.includes('javascript:'), false);
+  assert.equal(cleanStatic.includes('<custom-wrapper'), false);
+
+  const cleanEditor = sanitizeEditedHtml(nestedAttack);
+  assert.match(cleanEditor, /<h2>/);
+  assert.equal(cleanEditor.includes('onerror='), false);
+  assert.equal(cleanEditor.includes('onload='), false);
+  assert.equal(cleanEditor.includes('onclick='), false);
+  assert.equal(cleanEditor.includes('javascript:'), false);
+  assert.equal(cleanEditor.includes('<custom-wrapper'), false);
+
+  const cleanArticle = sanitizeArticleHtml(nestedAttack, 'https://example.com/post/', 'Different Title');
+  assert.equal(cleanArticle.includes('onerror='), false);
+  assert.equal(cleanArticle.includes('onload='), false);
+  assert.equal(cleanArticle.includes('onclick='), false);
+  assert.equal(cleanArticle.includes('javascript:'), false);
+  assert.equal(cleanArticle.includes('<custom-wrapper'), false);
+
+  // 3. Store status exposes pseo_nested_silo, builds /blog/<slug>/index.html, and copies local images embedded in custom Site Pages
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pseo-audit-regressions-'));
+  try {
+    const store = new DashboardStore({ workspaceDir: tmpDir });
+    const status = store.getStatus() as { available_routing_modes: string[] };
+    assert.equal(status.available_routing_modes.includes('pseo_nested_silo'), true);
+
+    await store.executeIngestion({ sourceType: 'sitemap', urlOrList: '' });
+
+    // Place a local image referenced ONLY by a custom About Us page
+    const assetsDir = path.join(tmpDir, 'assets', 'images');
+    fs.mkdirSync(assetsDir, { recursive: true });
+    fs.writeFileSync(path.join(assetsDir, 'team-portrait.webp'), 'RIFF....WEBP', 'utf-8');
+
+    store.updateStaticPage('about', {
+      title: 'About Our Studio',
+      body_html: '<h2>Meet the Team</h2><p><img src="/assets/images/team-portrait.webp" alt="Studio Team" /></p>',
+    });
+
+    const build = store.runBuild({
+      clean: true,
+      targetCloud: 'cloudflare',
+      theme: 'pinterest-mag',
+      routingMode: 'pseo_nested_silo',
+    });
+    assert.equal(build.success, true);
+    const outDir = String(build.output_dir);
+    const firstSlug = store.listPosts()[0].slug;
+    assert.equal(fs.existsSync(path.join(outDir, 'blog', firstSlug, 'index.html')), true);
+    assert.equal(fs.existsSync(path.join(outDir, 'assets', 'images', 'team-portrait.webp')), true);
+
+    // Single static page dry-run deploy also includes the referenced local image
+    const pageDeploy = await store.deployStaticPage('about', { platform: 'cloudflare', dry_run: true });
+    assert.equal(pageDeploy.success, true);
+    assert.equal((pageDeploy.changed_files as string[]).includes('assets/images/team-portrait.webp'), true);
+
+    // 4. clearActiveProjectData MUST reject unknown project IDs without wiping active project posts
+    const countBefore = store.listPosts().length;
+    assert.throws(() => store.clearActiveProjectData('__nonexistent_project__'), /not found/);
+    assert.equal(store.listPosts().length, countBefore);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 
 
