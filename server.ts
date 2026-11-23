@@ -115,6 +115,15 @@ export function createApp() {
     }
   });
 
+  app.post('/api/upload-block-image', async (req, res) => {
+    try {
+      const result = await store.uploadThemeBlockImage((req.body || {}) as Record<string, unknown>);
+      res.json(result);
+    } catch (err) {
+      res.status(400).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
   // --- Posts & Catalog ---
   app.get('/api/posts', (req, res) => {
     const q = String(req.query.q || '');
@@ -240,6 +249,8 @@ export function createApp() {
             : undefined,
         viewMode:
           typeof (body.view_mode || body.type) === 'string' ? String(body.view_mode || body.type) : undefined,
+        themeCustomizations:
+          body.theme_customizations !== undefined ? body.theme_customizations : undefined,
       });
       res.json({ success: true, html });
     } catch (err) {

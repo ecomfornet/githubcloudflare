@@ -35,4 +35,14 @@
 - **API Surface**: `GET /api/pages`, `GET /api/pages/:slug`, `PUT /api/pages/:slug` (save, upload HTML, or reset to default), `POST /api/pages/:slug/preview`, `POST /api/pages/:slug/deploy` (`platform: 'cloudflare' | 'github'`), `POST /api/pages/deploy-all`.
 - **UI**: Sub-tab inside **03 Catalog** (`Articles & Posts` / `Site Pages (9)`) with per-row `Upload HTML`, `View`, `Edit`, `Deploy` controls, bulk 2-option deploy buttons, and a full Page Editor Modal with Visual / HTML / Live Preview tabs + explicit Cloudflare & GitHub direct deploy options.
 
+## 6. Theme Preview Live Visual Customizer (Titles, Footer Text & Image + Text Blocks)
+- **Data Model (`src/types.ts`)**: `ThemeContentBlock` (`id`, `eyebrow`, `title`, `body`, `image_url`, `image_alt`, `layout: 'image-left' | 'image-right'`, `position: 'after-hero' | 'before-newsletter' | 'before-footer'`, `cta_label`, `cta_url`) and `ThemeCustomizations` (`hero_title`, `hero_subtitle`, `categories_title`, `latest_title`, `newsletter_title`, `newsletter_copy`, `footer_description`, `footer_copyright`, `footer_email`, `content_blocks`) stored per project on `BrandingConfig.theme_customizations` and `ProjectItem.theme_customizations`, normalized via `normalizeThemeCustomizations()`.
+- **Template Rendering (`src/templates.ts`)**: Applies title/copy overrides and renders responsive `.custom-media-band` Image + Text blocks in `renderHubHtml()` across all 3 themes (`editorial-warm`, `nordic-studio`, `pinterest-mag`) and applies footer overrides in `renderFooter()` globally (Homepage, Articles, Categories, Static Pages).
+- **API & Persistence (`src/store.ts`, `server.ts`)**:
+  - `POST /api/preview` accepts optional draft `theme_customizations` for instant non-destructive live previewing.
+  - `POST /api/config` persists `branding.theme_customizations` per active project; `runBuild()` copies local `/assets/images/*` referenced by custom blocks into `dist/<project>/assets/images/`.
+  - `POST /api/upload-block-image` validates and saves uploaded block images (converting raster uploads to WebP via `sharp` or sanitizing SVG) into `/assets/images/` and returns `{ success: true, image_url }`.
+- **UI (`public/index.html`, `public/style.css`, `public/app.js`)**: Side-by-side collapsible editor drawer inside `#templatePreviewModal` with 3 tabs (**Titles**, **Image & Text**, **Footer**), live debounced iframe re-rendering, image file upload + URL input, reorder/delete block controls, **Reset Edits**, and **Save & Apply** persistence.
+
+
 

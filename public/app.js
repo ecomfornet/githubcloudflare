@@ -25,6 +25,9 @@
     editorMode: 'visual',
     rteSavedRange: null,
     rteInlineAction: null,
+    themeCustomDraft: { content_blocks: [] },
+    themeEditorDebounceTimer: null,
+    themeEditorDirty: false,
   };
 
   const State = state; // Safe alias preventing ReferenceError: State is not defined
@@ -248,11 +251,28 @@
     // Theme & Routing Visual Gallery
     btnOpenThemePreview: document.getElementById('btnOpenThemePreview'),
     templatePreviewModal: document.getElementById('templatePreviewModal'),
+    templateModalWorkspace: document.getElementById('templateModalWorkspace'),
+    themeEditorSidebar: document.getElementById('themeEditorSidebar'),
+    toggleThemeEditorBtn: document.getElementById('toggleThemeEditorBtn'),
     closeTemplateModalBtn: document.getElementById('closeTemplateModalBtn'),
     templateModalIframe: document.getElementById('templateModalIframe'),
     templateModalThemeBadge: document.getElementById('templateModalThemeBadge'),
     templateModalRoutingBadge: document.getElementById('templateModalRoutingBadge'),
     applyTemplateThemeBtn: document.getElementById('applyTemplateThemeBtn'),
+    themeEdLiveStatus: document.getElementById('themeEdLiveStatus'),
+    btnResetThemeEdits: document.getElementById('btnResetThemeEdits'),
+    teHeroTitle: document.getElementById('teHeroTitle'),
+    teHeroSubtitle: document.getElementById('teHeroSubtitle'),
+    teCategoriesTitle: document.getElementById('teCategoriesTitle'),
+    teLatestTitle: document.getElementById('teLatestTitle'),
+    teNewsletterTitle: document.getElementById('teNewsletterTitle'),
+    teNewsletterCopy: document.getElementById('teNewsletterCopy'),
+    teFooterDesc: document.getElementById('teFooterDesc'),
+    teFooterCopyright: document.getElementById('teFooterCopyright'),
+    teFooterEmail: document.getElementById('teFooterEmail'),
+    btnAddThemeBlock: document.getElementById('btnAddThemeBlock'),
+    themeBlocksList: document.getElementById('themeBlocksList'),
+    themeBlocksCount: document.getElementById('themeBlocksCount'),
 
     // Build & Deploy Cockpit
     triggerBuildBtn: document.getElementById('triggerBuildBtn'),
@@ -3806,14 +3826,281 @@
       });
     });
 
-    // Open Fullscreen Template Preview Modal
+    // Open Fullscreen Template Preview Modal & Live Visual Customizer
+    let modalPreviewReqSeq = 0;
 
-    async function openTemplateModal(themeKey, routingKey, defaultView = 'hub') {
+    function cloneThemeCustomizations(raw) {
+      const src = raw && typeof raw === 'object' ? raw : {};
+      const blocks = Array.isArray(src.content_blocks)
+        ? src.content_blocks.map((b, idx) => ({
+            id: String(b?.id || `block-${Date.now()}-${idx}`),
+            eyebrow: String(b?.eyebrow || ''),
+            title: String(b?.title || ''),
+            body: String(b?.body || ''),
+            image_url: String(b?.image_url || ''),
+            image_alt: String(b?.image_alt || ''),
+            layout: b?.layout === 'image-right' ? 'image-right' : 'image-left',
+            position:
+              b?.position === 'after-hero' || b?.position === 'before-footer'
+                ? b.position
+                : 'before-newsletter',
+            cta_label: String(b?.cta_label || ''),
+            cta_url: String(b?.cta_url || ''),
+          }))
+        : [];
+      return {
+        hero_title: String(src.hero_title || ''),
+        hero_subtitle: String(src.hero_subtitle || ''),
+        categories_title: String(src.categories_title || ''),
+        latest_title: String(src.latest_title || ''),
+        newsletter_title: String(src.newsletter_title || ''),
+        newsletter_copy: String(src.newsletter_copy || ''),
+        footer_description: String(src.footer_description || ''),
+        footer_copyright: String(src.footer_copyright || ''),
+        footer_email: String(src.footer_email || ''),
+        content_blocks: blocks,
+      };
+    }
+
+    function setThemeEdStatus(label) {
+      if (DOM.themeEdLiveStatus) DOM.themeEdLiveStatus.textContent = label;
+    }
+
+    function escapeAttr(val) {
+      return String(val ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    }
+
+    function readDraftFromInputs() {
+      const d = state.themeCustomDraft || cloneThemeCustomizations({});
+      if (DOM.teHeroTitle) d.hero_title = DOM.teHeroTitle.value;
+      if (DOM.teHeroSubtitle) d.hero_subtitle = DOM.teHeroSubtitle.value;
+      if (DOM.teCategoriesTitle) d.categories_title = DOM.teCategoriesTitle.value;
+      if (DOM.teLatestTitle) d.latest_title = DOM.teLatestTitle.value;
+      if (DOM.teNewsletterTitle) d.newsletter_title = DOM.teNewsletterTitle.value;
+      if (DOM.teNewsletterCopy) d.newsletter_copy = DOM.teNewsletterCopy.value;
+      if (DOM.teFooterDesc) d.footer_description = DOM.teFooterDesc.value;
+      if (DOM.teFooterCopyright) d.footer_copyright = DOM.teFooterCopyright.value;
+      if (DOM.teFooterEmail) d.footer_email = DOM.teFooterEmail.value;
+      state.themeCustomDraft = d;
+      return d;
+    }
+
+    function syncThemeEditorInputsFromDraft() {
+      const d = state.themeCustomDraft || cloneThemeCustomizations({});
+      if (DOM.teHeroTitle) DOM.teHeroTitle.value = d.hero_title || '';
+      if (DOM.teHeroSubtitle) DOM.teHeroSubtitle.value = d.hero_subtitle || '';
+      if (DOM.teCategoriesTitle) DOM.teCategoriesTitle.value = d.categories_title || '';
+      if (DOM.teLatestTitle) DOM.teLatestTitle.value = d.latest_title || '';
+      if (DOM.teNewsletterTitle) DOM.teNewsletterTitle.value = d.newsletter_title || '';
+      if (DOM.teNewsletterCopy) DOM.teNewsletterCopy.value = d.newsletter_copy || '';
+      if (DOM.teFooterDesc) DOM.teFooterDesc.value = d.footer_description || '';
+      if (DOM.teFooterCopyright) DOM.teFooterCopyright.value = d.footer_copyright || '';
+      if (DOM.teFooterEmail) DOM.teFooterEmail.value = d.footer_email || '';
+      renderThemeBlocksEditor();
+    }
+
+    function renderThemeBlocksEditor() {
+      if (!DOM.themeBlocksList) return;
+      const blocks = Array.isArray(state.themeCustomDraft?.content_blocks)
+        ? state.themeCustomDraft.content_blocks
+        : [];
+      if (DOM.themeBlocksCount) {
+        DOM.themeBlocksCount.textContent = `${blocks.length} ${blocks.length === 1 ? 'block' : 'blocks'}`;
+      }
+      if (!blocks.length) {
+        DOM.themeBlocksList.innerHTML =
+          '<div class="theme-blocks-empty">No custom Image + Text blocks yet.<br/>Click <strong>+ Add Image + Text Block</strong> above to insert a split visual section on your homepage.</div>';
+        return;
+      }
+
+      DOM.themeBlocksList.innerHTML = blocks
+        .map((blk, idx) => {
+          const num = idx + 1;
+          const uid = escapeAttr(blk.id || `block-${idx}`);
+          const thumbHtml = blk.image_url
+            ? `<img class="theme-block-thumb" src="${escapeAttr(blk.image_url)}" alt="${escapeAttr(blk.image_alt || blk.title || 'Block preview')}" />`
+            : `<div class="theme-block-thumb-placeholder">No img</div>`;
+          return `
+            <div class="theme-block-card" data-block-index="${idx}">
+              <div class="theme-block-card-head">
+                <span class="theme-block-card-title">Block #${num}${blk.title ? ' · ' + escapeAttr(blk.title) : ''}</span>
+                <div class="theme-block-card-actions">
+                  <button type="button" data-action="up" data-idx="${idx}" aria-label="Move block ${num} up" ${idx === 0 ? 'disabled' : ''}>↑</button>
+                  <button type="button" data-action="down" data-idx="${idx}" aria-label="Move block ${num} down" ${idx === blocks.length - 1 ? 'disabled' : ''}>↓</button>
+                  <button type="button" class="btn-del-block" data-action="delete" data-idx="${idx}" aria-label="Delete block ${num}">✕</button>
+                </div>
+              </div>
+
+              <div class="theme-block-img-row">
+                ${thumbHtml}
+                <div class="theme-block-upload-wrap">
+                  <label class="theme-block-upload-btn" for="blkFile-${uid}">
+                    <span>📷 Upload Image</span>
+                    <input type="file" id="blkFile-${uid}" data-block-upload="${idx}" accept="image/png,image/jpeg,image/webp,image/svg+xml" style="display: none;" />
+                  </label>
+                  <span style="font-size: 0.68rem; color: #64748b;">PNG, JPG, WebP or SVG · or paste URL below</span>
+                </div>
+              </div>
+
+              <div class="theme-ed-field">
+                <label for="blkImgUrl-${uid}">Image URL</label>
+                <input type="text" id="blkImgUrl-${uid}" data-block-field="image_url" data-idx="${idx}" value="${escapeAttr(blk.image_url)}" placeholder="/assets/images/... or https://..." />
+              </div>
+
+              <div class="theme-block-grid-2">
+                <div class="theme-ed-field">
+                  <label for="blkLayout-${uid}">Layout</label>
+                  <select id="blkLayout-${uid}" data-block-field="layout" data-idx="${idx}">
+                    <option value="image-left" ${blk.layout === 'image-left' ? 'selected' : ''}>Image Left</option>
+                    <option value="image-right" ${blk.layout === 'image-right' ? 'selected' : ''}>Image Right</option>
+                  </select>
+                </div>
+                <div class="theme-ed-field">
+                  <label for="blkPos-${uid}">Placement</label>
+                  <select id="blkPos-${uid}" data-block-field="position" data-idx="${idx}">
+                    <option value="after-hero" ${blk.position === 'after-hero' ? 'selected' : ''}>After Hero</option>
+                    <option value="before-newsletter" ${blk.position === 'before-newsletter' ? 'selected' : ''}>Before Newsletter</option>
+                    <option value="before-footer" ${blk.position === 'before-footer' ? 'selected' : ''}>Above Footer</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="theme-ed-field">
+                <label for="blkEyebrow-${uid}">Eyebrow / Kicker (Optional)</label>
+                <input type="text" id="blkEyebrow-${uid}" data-block-field="eyebrow" data-idx="${idx}" maxlength="80" value="${escapeAttr(blk.eyebrow)}" placeholder="e.g. Our Philosophy" />
+              </div>
+
+              <div class="theme-ed-field">
+                <label for="blkTitle-${uid}">Block Heading</label>
+                <input type="text" id="blkTitle-${uid}" data-block-field="title" data-idx="${idx}" maxlength="160" value="${escapeAttr(blk.title)}" placeholder="e.g. Designed for Calm, Everyday Living" />
+              </div>
+
+              <div class="theme-ed-field">
+                <label for="blkBody-${uid}">Block Text</label>
+                <textarea id="blkBody-${uid}" rows="3" data-block-field="body" data-idx="${idx}" maxlength="1800" placeholder="Write a short paragraph to appear beside your image...">${escapeAttr(blk.body)}</textarea>
+              </div>
+
+              <div class="theme-block-grid-2">
+                <div class="theme-ed-field">
+                  <label for="blkCtaLabel-${uid}">Button Text (Optional)</label>
+                  <input type="text" id="blkCtaLabel-${uid}" data-block-field="cta_label" data-idx="${idx}" maxlength="60" value="${escapeAttr(blk.cta_label)}" placeholder="e.g. Read Our Story" />
+                </div>
+                <div class="theme-ed-field">
+                  <label for="blkCtaUrl-${uid}">Button Link</label>
+                  <input type="text" id="blkCtaUrl-${uid}" data-block-field="cta_url" data-idx="${idx}" maxlength="300" value="${escapeAttr(blk.cta_url)}" placeholder="e.g. /about/" />
+                </div>
+              </div>
+            </div>
+          `;
+        })
+        .join('');
+    }
+
+    async function renderTemplateModalPreview(preserveScroll = false) {
+      const reqId = ++modalPreviewReqSeq;
+      const theme = state.modalActiveTheme || 'nordic-studio';
+      const routing = state.modalActiveRouting || 'single';
+      const viewMode = state.modalActiveView || 'hub';
+      setThemeEdStatus('Updating preview...');
+
+      let prevScrollY = 0;
+      if (preserveScroll && DOM.templateModalIframe) {
+        try {
+          prevScrollY = DOM.templateModalIframe.contentWindow?.scrollY || 0;
+        } catch {
+          prevScrollY = 0;
+        }
+      }
+
+      try {
+        const samplePayload = {
+          theme,
+          routing_mode: routing,
+          view_mode: viewMode,
+          theme_customizations: state.themeCustomDraft,
+        };
+
+        if (viewMode === 'post') {
+          samplePayload.post = {
+            slug: 'modern-room-styling-guide',
+            title: 'Modern Scandinavian Living Room Design: 15 Warm Minimalist Ideas',
+            excerpt: 'Transform your main living space with organic textures, functional hidden storage, and warm lighting layers designed for everyday comfort.',
+            category: 'Living Room Styling',
+            category_slug: 'living-room',
+            parent_slug: 'home-organization',
+            date: '2026-11-02',
+            takeaways: [
+              'Balanced Room Proportions: Anchor your layout with clean-lined low profile seating.',
+              'Layered Textures: Blend natural oak, boucle, and linen for Scandinavian warmth.',
+              'Intentional Lighting: Use 3 light sources at varying heights to eliminate dark corners.',
+            ],
+            checklist: [
+              { id: 'step-1', text: 'Measure room footprint and map primary natural light windows' },
+              { id: 'step-2', text: 'Select foundational neutral furniture pieces (boucle, warm oak)' },
+              { id: 'step-3', text: 'Install warm-toned 2700K ambient and task lighting fixtures' },
+            ],
+          };
+        }
+
+        const res = await api('/api/preview', 'POST', samplePayload);
+        if (reqId !== modalPreviewReqSeq) return;
+        if (res.html && DOM.templateModalIframe) {
+          if (preserveScroll && prevScrollY > 0) {
+            DOM.templateModalIframe.onload = () => {
+              try {
+                DOM.templateModalIframe.contentWindow?.scrollTo(0, prevScrollY);
+              } catch {
+                // Ignore cross-origin scroll restore errors
+              }
+              DOM.templateModalIframe.onload = null;
+            };
+          } else {
+            DOM.templateModalIframe.onload = null;
+          }
+          DOM.templateModalIframe.srcdoc = res.html;
+        }
+        setThemeEdStatus(state.themeEditorDirty ? 'Unsaved draft' : 'Live preview ready');
+      } catch (err) {
+        if (reqId !== modalPreviewReqSeq) return;
+        setThemeEdStatus('Preview error');
+        showToast(`Template preview render failed: ${err.message}`, 'error');
+      }
+    }
+
+    function scheduleTemplateModalPreview(immediate = false, preserveScroll = true) {
+      if (state.themeEditorDebounceTimer) {
+        clearTimeout(state.themeEditorDebounceTimer);
+        state.themeEditorDebounceTimer = null;
+      }
+      state.themeEditorDirty = true;
+      setThemeEdStatus('Updating preview...');
+      if (immediate) {
+        renderTemplateModalPreview(preserveScroll);
+      } else {
+        state.themeEditorDebounceTimer = setTimeout(() => {
+          state.themeEditorDebounceTimer = null;
+          renderTemplateModalPreview(preserveScroll);
+        }, 240);
+      }
+    }
+
+    async function openTemplateModal(themeKey, routingKey, defaultView = 'hub', preserveDraft = false) {
       const theme = themeKey || (DOM.cfgTheme && DOM.cfgTheme.value) || 'nordic-studio';
       const routing = routingKey || (DOM.cfgRoutingMode && DOM.cfgRoutingMode.value) || 'single';
       state.modalActiveTheme = theme;
       state.modalActiveRouting = routing;
       state.modalActiveView = defaultView || 'hub';
+
+      if (!preserveDraft) {
+        const savedCustom = state.config?.branding?.theme_customizations;
+        state.themeCustomDraft = cloneThemeCustomizations(savedCustom);
+        state.themeEditorDirty = false;
+        syncThemeEditorInputsFromDraft();
+      }
 
       // Synchronize modal view toggle buttons
       document.querySelectorAll('.modal-view-btn').forEach((btn) => {
@@ -3851,42 +4138,204 @@
       if (DOM.templatePreviewModal) {
         DOM.templatePreviewModal.classList.add('active');
       }
-      try {
-        const samplePayload = {
-          theme,
-          routing_mode: routing,
-          view_mode: state.modalActiveView,
-        };
+      await renderTemplateModalPreview(false);
+    }
 
-        if (state.modalActiveView === 'post') {
-          samplePayload.post = {
-            slug: 'modern-room-styling-guide',
-            title: 'Modern Scandinavian Living Room Design: 15 Warm Minimalist Ideas',
-            excerpt: 'Transform your main living space with organic textures, functional hidden storage, and warm lighting layers designed for everyday comfort.',
-            category: 'Living Room Styling',
-            category_slug: 'living-room',
-            parent_slug: 'home-organization',
-            date: '2026-11-02',
-            takeaways: [
-              'Balanced Room Proportions: Anchor your layout with clean-lined low profile seating.',
-              'Layered Textures: Blend natural oak, boucle, and linen for Scandinavian warmth.',
-              'Intentional Lighting: Use 3 light sources at varying heights to eliminate dark corners.',
-            ],
-            checklist: [
-              { id: 'step-1', text: 'Measure room footprint and map primary natural light windows' },
-              { id: 'step-2', text: 'Select foundational neutral furniture pieces (boucle, warm oak)' },
-              { id: 'step-3', text: 'Install warm-toned 2700K ambient and task lighting fixtures' },
-            ],
-          };
-        }
+    // Sidebar Toggle Button
+    if (DOM.toggleThemeEditorBtn && DOM.templateModalWorkspace) {
+      DOM.toggleThemeEditorBtn.addEventListener('click', () => {
+        const collapsed = DOM.templateModalWorkspace.classList.toggle('editor-collapsed');
+        DOM.toggleThemeEditorBtn.classList.toggle('active', !collapsed);
+        DOM.toggleThemeEditorBtn.setAttribute('aria-expanded', String(!collapsed));
+      });
+    }
 
-        const res = await api('/api/preview', 'POST', samplePayload);
-        if (res.html && DOM.templateModalIframe) {
-          DOM.templateModalIframe.srcdoc = res.html;
+    // Sidebar Tab Switching (Titles / Image & Text / Footer)
+    document.querySelectorAll('.theme-ed-tab').forEach((tabBtn) => {
+      tabBtn.addEventListener('click', () => {
+        const target = tabBtn.dataset.edTab;
+        if (!target) return;
+        document.querySelectorAll('.theme-ed-tab').forEach((b) => {
+          const isMatch = b.dataset.edTab === target;
+          b.classList.toggle('active', isMatch);
+          b.setAttribute('aria-selected', String(isMatch));
+        });
+        document.querySelectorAll('.theme-ed-panel').forEach((panel) => {
+          panel.classList.toggle('active', panel.dataset.edPanel === target);
+        });
+      });
+    });
+
+    // Live Input Bindings for Titles & Footer
+    [
+      DOM.teHeroTitle,
+      DOM.teHeroSubtitle,
+      DOM.teCategoriesTitle,
+      DOM.teLatestTitle,
+      DOM.teNewsletterTitle,
+      DOM.teNewsletterCopy,
+      DOM.teFooterDesc,
+      DOM.teFooterCopyright,
+      DOM.teFooterEmail,
+    ].forEach((inputEl) => {
+      if (!inputEl) return;
+      inputEl.addEventListener('input', () => {
+        readDraftFromInputs();
+        scheduleTemplateModalPreview(false, true);
+      });
+    });
+
+    // Add Image + Text Block
+    if (DOM.btnAddThemeBlock) {
+      DOM.btnAddThemeBlock.addEventListener('click', () => {
+        const blocks = state.themeCustomDraft.content_blocks || [];
+        if (blocks.length >= 12) {
+          showToast('Maximum of 12 Image + Text blocks reached.', 'warning');
+          return;
         }
-      } catch (err) {
-        showToast(`Template preview render failed: ${err.message}`, 'error');
-      }
+        const firstPost = Array.isArray(state.posts)
+          ? state.posts.find((p) => p && (p.local_image_path || p.image_url))
+          : null;
+        const firstPostImg = (firstPost && (firstPost.local_image_path || firstPost.image_url)) || '';
+        blocks.push({
+          id: `block-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          eyebrow: 'Featured Story',
+          title: 'Crafted Spaces for Everyday Calm',
+          body: 'Combine natural textures, warm lighting, and thoughtful storage to bring timeless character into every corner of your home.',
+          image_url: firstPostImg,
+          image_alt: 'Featured interior detail',
+          layout: blocks.length % 2 === 0 ? 'image-left' : 'image-right',
+          position: blocks.length === 0 ? 'after-hero' : 'before-newsletter',
+          cta_label: 'Explore Our Guide',
+          cta_url: '/about/',
+        });
+        state.themeCustomDraft.content_blocks = blocks;
+        renderThemeBlocksEditor();
+        scheduleTemplateModalPreview(true, true);
+      });
+    }
+
+    // Delegated Events for Image + Text Block Cards (edit fields, reorder, delete, upload image)
+    if (DOM.themeBlocksList) {
+      DOM.themeBlocksList.addEventListener('input', (e) => {
+        const target = e.target;
+        if (!target || !target.dataset || !target.dataset.blockField) return;
+        const idx = Number(target.dataset.idx);
+        const field = target.dataset.blockField;
+        const blocks = state.themeCustomDraft?.content_blocks;
+        if (!Array.isArray(blocks) || !blocks[idx]) return;
+        blocks[idx][field] = target.value;
+        if (field === 'title') {
+          const card = target.closest('.theme-block-card');
+          const headTitle = card && card.querySelector('.theme-block-card-title');
+          if (headTitle) headTitle.textContent = `Block #${idx + 1}${target.value ? ' · ' + target.value : ''}`;
+        }
+        if (field === 'image_url') {
+          const card = target.closest('.theme-block-card');
+          const imgRow = card && card.querySelector('.theme-block-img-row');
+          if (imgRow) {
+            const existingThumb = imgRow.querySelector('.theme-block-thumb, .theme-block-thumb-placeholder');
+            if (existingThumb) {
+              const cleanUrl = target.value.trim();
+              if (cleanUrl) {
+                const img = document.createElement('img');
+                img.className = 'theme-block-thumb';
+                img.src = cleanUrl;
+                img.alt = blocks[idx].image_alt || blocks[idx].title || 'Block preview';
+                existingThumb.replaceWith(img);
+              } else {
+                const ph = document.createElement('div');
+                ph.className = 'theme-block-thumb-placeholder';
+                ph.textContent = 'No img';
+                existingThumb.replaceWith(ph);
+              }
+            }
+          }
+        }
+        scheduleTemplateModalPreview(false, true);
+      });
+
+      DOM.themeBlocksList.addEventListener('change', async (e) => {
+        const target = e.target;
+        if (!target || !target.dataset) return;
+        // Select dropdowns (layout / position)
+        if (target.dataset.blockField && target.tagName === 'SELECT') {
+          const idx = Number(target.dataset.idx);
+          const blocks = state.themeCustomDraft?.content_blocks;
+          if (!Array.isArray(blocks) || !blocks[idx]) return;
+          blocks[idx][target.dataset.blockField] = target.value;
+          scheduleTemplateModalPreview(true, true);
+          return;
+        }
+        // Image file upload
+        if (target.dataset.blockUpload !== undefined) {
+          const idx = Number(target.dataset.blockUpload);
+          const file = target.files && target.files[0];
+          const blocks = state.themeCustomDraft?.content_blocks;
+          if (!file || !Array.isArray(blocks) || !blocks[idx]) return;
+          try {
+            setThemeEdStatus('Uploading image...');
+            const dataUrl = await new Promise((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(String(reader.result || ''));
+              reader.onerror = () => reject(new Error('Could not read selected file.'));
+              reader.readAsDataURL(file);
+            });
+            const uploaded = await api('/api/upload-block-image', 'POST', {
+              data: dataUrl,
+              filename: file.name,
+            });
+            if (uploaded.image_url) {
+              blocks[idx].image_url = uploaded.image_url;
+              if (!blocks[idx].image_alt) {
+                blocks[idx].image_alt = file.name.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ');
+              }
+              renderThemeBlocksEditor();
+              scheduleTemplateModalPreview(true, true);
+              showToast('Block image uploaded & optimized.', 'success');
+            }
+          } catch (err) {
+            setThemeEdStatus('Upload failed');
+            showToast(`Image upload failed: ${err.message}`, 'error');
+          } finally {
+            target.value = '';
+          }
+        }
+      });
+
+      DOM.themeBlocksList.addEventListener('click', (e) => {
+        const btn = e.target && e.target.closest('button[data-action]');
+        if (!btn) return;
+        const action = btn.dataset.action;
+        const idx = Number(btn.dataset.idx);
+        const blocks = state.themeCustomDraft?.content_blocks;
+        if (!Array.isArray(blocks) || idx < 0 || idx >= blocks.length) return;
+        if (action === 'up' && idx > 0) {
+          const tmp = blocks[idx - 1];
+          blocks[idx - 1] = blocks[idx];
+          blocks[idx] = tmp;
+        } else if (action === 'down' && idx < blocks.length - 1) {
+          const tmp = blocks[idx + 1];
+          blocks[idx + 1] = blocks[idx];
+          blocks[idx] = tmp;
+        } else if (action === 'delete') {
+          blocks.splice(idx, 1);
+        } else {
+          return;
+        }
+        renderThemeBlocksEditor();
+        scheduleTemplateModalPreview(true, true);
+      });
+    }
+
+    // Reset Edits Button (clears custom overrides in draft)
+    if (DOM.btnResetThemeEdits) {
+      DOM.btnResetThemeEdits.addEventListener('click', () => {
+        state.themeCustomDraft = cloneThemeCustomizations({});
+        syncThemeEditorInputsFromDraft();
+        scheduleTemplateModalPreview(true, false);
+        showToast('Draft theme edits reset to theme defaults. Click Save & Apply to persist.', 'info');
+      });
     }
 
     // Modal View Toggle Triggers
@@ -3895,7 +4344,7 @@
         e.preventDefault();
         const view = btn.dataset.view;
         if (!view) return;
-        openTemplateModal(state.modalActiveTheme, state.modalActiveRouting, view);
+        openTemplateModal(state.modalActiveTheme, state.modalActiveRouting, view, true);
       });
     });
 
@@ -3904,7 +4353,6 @@
       DOM.closeTemplateModalBtn.addEventListener('click', () => {
         if (DOM.templatePreviewModal) DOM.templatePreviewModal.classList.remove('active');
       });
-
     }
 
     if (DOM.templatePreviewModal) {
@@ -3913,7 +4361,6 @@
           DOM.templatePreviewModal.classList.remove('active');
         }
       });
-
     }
 
     window.addEventListener('keydown', (e) => {
@@ -3931,30 +4378,50 @@
           DOM.templateModalIframe.style.width = btn.getAttribute('data-width');
         }
       });
-
     });
 
-    // "Apply This Theme" inside Preview Modal
+    // "Save & Apply Theme" inside Preview Modal (persists Theme + Titles + Image/Text Blocks + Footer)
     if (DOM.applyTemplateThemeBtn) {
       DOM.applyTemplateThemeBtn.addEventListener('click', async () => {
         const chosen = state.modalActiveTheme || 'nordic-studio';
+        const customPayload = readDraftFromInputs();
         syncThemeToUI(chosen);
         const curProj = state.projects && state.projects.find((p) => p.id === state.activeProject);
-        if (curProj) curProj.theme = chosen;
+        if (curProj) {
+          curProj.theme = chosen;
+          curProj.theme_customizations = cloneThemeCustomizations(customPayload);
+        }
         if (state.config && state.config.build) state.config.build.theme = chosen;
+        if (state.config && state.config.branding) {
+          state.config.branding.theme_customizations = cloneThemeCustomizations(customPayload);
+        }
         if (state.status) state.status.theme = chosen;
         try {
           if (state.activeProject) {
-            await api('/api/projects/update', 'POST', { project_id: state.activeProject, theme: chosen });
+            await api('/api/projects/update', 'POST', {
+              project_id: state.activeProject,
+              theme: chosen,
+              theme_customizations: customPayload,
+            });
           }
-          await api('/api/config', 'POST', { build: { theme: chosen } });
-          showToast(`Theme applied & saved: ${chosen}.`, 'success');
+          const saved = await api('/api/config', 'POST', {
+            build: { theme: chosen },
+            branding: { theme_customizations: customPayload },
+          });
+          if (saved && saved.config && saved.config.branding) {
+            state.config.branding.theme_customizations = cloneThemeCustomizations(
+              saved.config.branding.theme_customizations
+            );
+          }
+          state.themeEditorDirty = false;
+          setThemeEdStatus('Saved');
+          triggerPreview();
+          showToast(`Theme & customizations saved for ${chosen}.`, 'success');
         } catch (err) {
           showToast(`Theme applied locally, but save failed: ${err.message}`, 'warning');
         }
         if (DOM.templatePreviewModal) DOM.templatePreviewModal.classList.remove('active');
       });
-
     }
 
     // Theme Card Direct Preview Buttons

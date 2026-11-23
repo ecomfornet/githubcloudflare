@@ -1106,6 +1106,95 @@ ${fontFallbackCss}
       padding: 2.75rem 0 2.4rem;
     }
 
+    /* ---- Custom Editorial Image + Text Showcase Blocks ---- */
+    .custom-media-band {
+      background: ${theme.card_bg};
+      border-top: 1px solid ${theme.card_border};
+      border-bottom: 1px solid ${theme.card_border};
+      padding: clamp(2.5rem, 5vw, 4rem) 0;
+    }
+    .custom-media-band + .custom-media-band {
+      border-top: none;
+    }
+    .custom-media-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+      gap: clamp(1.75rem, 4vw, 3.25rem);
+      align-items: center;
+    }
+    .custom-media-grid.is-single-col {
+      grid-template-columns: minmax(0, 1fr);
+      max-width: 780px;
+      margin: 0 auto;
+    }
+    .custom-media-grid.layout-image-right .custom-media-figure {
+      order: 2;
+    }
+    .custom-media-grid.layout-image-right .custom-media-copy {
+      order: 1;
+    }
+    @media (max-width: 820px) {
+      .custom-media-grid {
+        grid-template-columns: 1fr;
+        gap: 1.5rem;
+      }
+      .custom-media-grid.layout-image-right .custom-media-figure,
+      .custom-media-grid.layout-image-right .custom-media-copy {
+        order: initial;
+      }
+    }
+    .custom-media-figure {
+      margin: 0;
+      border-radius: 8px;
+      overflow: hidden;
+      background: ${theme.tag_bg};
+      border: 1px solid ${theme.card_border};
+      aspect-ratio: 16 / 10;
+    }
+    .custom-media-figure img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .custom-media-title {
+      font-family: ${theme.font_headline};
+      font-size: clamp(1.6rem, 3vw, 2.35rem);
+      font-weight: 700;
+      line-height: 1.18;
+      letter-spacing: -0.02em;
+      color: ${theme.text_body};
+      margin: 0.45rem 0 0.85rem;
+      text-wrap: balance;
+    }
+    .custom-media-text p {
+      font-size: 1rem;
+      line-height: 1.72;
+      color: ${theme.muted_text};
+      margin: 0 0 0.9rem;
+    }
+    .custom-media-text p:last-child {
+      margin-bottom: 0;
+    }
+    .custom-media-cta {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      margin-top: 1.15rem;
+      padding: 0.65rem 1.25rem;
+      background: ${theme.accent};
+      color: #FFFFFF;
+      font-weight: 600;
+      font-size: 0.9rem;
+      border-radius: 6px;
+      text-decoration: none;
+      transition: opacity 0.16s ease, transform 0.16s ease;
+    }
+    .custom-media-cta:hover {
+      opacity: 0.92;
+      transform: translateY(-1px);
+    }
+
     /* ---- 3-Column Editorial Footer (decohome.homeandrecipe.com architecture) ---- */
     .site-footer {
       background: ${theme.tag_bg};
@@ -1663,6 +1752,24 @@ ${fontFallbackCss}
       color: #E2BE7F;
     }
 
+    body.theme-pinterest-mag .custom-media-band {
+      background: #FFFFFF;
+      border-color: #DCE3DD;
+    }
+    body.theme-pinterest-mag .custom-media-figure {
+      border-radius: 6px;
+      border-color: #DCE3DD;
+      background: #E8EFEA;
+    }
+    body.theme-pinterest-mag .custom-media-cta {
+      background: #0F2A22;
+      color: #F6F3EC;
+      border-radius: 4px;
+    }
+    body.theme-pinterest-mag .custom-media-cta:hover {
+      background: #1B4236;
+    }
+
     /* Deep-Forest Editorial Footer */
     body.theme-pinterest-mag .site-footer {
       background: #0F2A22;
@@ -1746,16 +1853,73 @@ function renderHeader(
   </header>`;
 }
 
+function renderCustomContentBlocks(
+  branding: BrandingConfig,
+  position: 'after-hero' | 'before-newsletter' | 'before-footer'
+): string {
+  const blocks = branding.theme_customizations?.content_blocks;
+  if (!Array.isArray(blocks) || blocks.length === 0) return '';
+  const matching = blocks.filter((b) => (b.position || 'after-hero') === position);
+  if (matching.length === 0) return '';
+
+  return matching
+    .map((block) => {
+      const hasImg = Boolean(block.image_url && block.image_url.trim());
+      const layoutClass = block.layout === 'image-right' ? 'layout-image-right' : 'layout-image-left';
+      const gridClass = hasImg ? `custom-media-grid ${layoutClass}` : 'custom-media-grid is-single-col';
+      const paragraphs = (block.body || '')
+        .split(/\n{2,}|\r\n\r\n/)
+        .map((chunk) => chunk.trim())
+        .filter(Boolean)
+        .map((chunk) => `<p>${escapeHtml(chunk).replace(/\n/g, '<br />')}</p>`)
+        .join('');
+      const imgHtml = hasImg
+        ? `<figure class="custom-media-figure">
+            <img src="${escapeHtml(block.image_url.trim())}" alt="${escapeHtml(block.image_alt || block.title || 'Editorial feature')}" loading="lazy" decoding="async" referrerpolicy="no-referrer" />
+          </figure>`
+        : '';
+      const ctaHtml =
+        block.cta_label && block.cta_url
+          ? `<a class="custom-media-cta" href="${escapeHtml(block.cta_url)}">${escapeHtml(block.cta_label)} &rarr;</a>`
+          : '';
+      return `<section class="custom-media-band" data-custom-block="${escapeHtml(block.id)}">
+        <div class="shell">
+          <div class="${gridClass}">
+            ${imgHtml}
+            <div class="custom-media-copy">
+              ${block.eyebrow ? `<span class="kicker">${escapeHtml(block.eyebrow)}</span>` : ''}
+              ${block.title ? `<h2 class="custom-media-title">${escapeHtml(block.title)}</h2>` : ''}
+              ${paragraphs ? `<div class="custom-media-text">${paragraphs}</div>` : ''}
+              ${ctaHtml}
+            </div>
+          </div>
+        </div>
+      </section>`;
+    })
+    .join('\n');
+}
+
 function renderFooter(
   branding: BrandingConfig,
   categories: CategoryItem[],
   identity: SiteIdentity
 ): string {
+  const custom = branding.theme_customizations || {};
   const safeSiteName = escapeHtml(identity.siteName);
   const hasCustomLogo = Boolean(branding.logo_path && branding.logo_path.trim());
   const footerBrandHtml = hasCustomLogo
     ? `<a href="/" aria-label="${safeSiteName}" style="display:inline-block;margin-bottom:0.8rem;"><img class="brand-logo-img" src="${escapeHtml(branding.logo_path.trim())}" alt="${safeSiteName}" width="190" height="38" loading="lazy" decoding="async" /></a>`
     : `<a class="footer-brand-name" href="/">${safeSiteName}</a>`;
+
+  const footerDescText = (custom.footer_description && custom.footer_description.trim()) || identity.tagline;
+  const footerCopyrightText =
+    (custom.footer_copyright && custom.footer_copyright.trim()) ||
+    `© ${new Date().getFullYear()} ${identity.siteName}. All rights reserved.`;
+  const footerEmailText = (custom.footer_email && custom.footer_email.trim()) || identity.contactEmail;
+  const isEmailAddr = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(footerEmailText);
+  const footerRightHtml = isEmailAddr
+    ? `<a href="mailto:${escapeHtml(footerEmailText)}">${escapeHtml(footerEmailText)}</a>`
+    : `<span>${escapeHtml(footerEmailText)}</span>`;
 
   const exploreItems = categories.length
     ? categories
@@ -1771,7 +1935,7 @@ function renderFooter(
       <div class="footer-grid">
         <div>
           ${footerBrandHtml}
-          <p class="footer-brand-desc">${escapeHtml(identity.tagline)}</p>
+          <p class="footer-brand-desc">${escapeHtml(footerDescText)}</p>
           ${footerSocials}
         </div>
         <div>
@@ -1795,8 +1959,8 @@ function renderFooter(
         </div>
       </div>
       <div class="footer-bottom">
-        <span>&copy; ${new Date().getFullYear()} ${safeSiteName}. All rights reserved.</span>
-        <a href="mailto:${escapeHtml(identity.contactEmail)}">${escapeHtml(identity.contactEmail)}</a>
+        <span>${escapeHtml(footerCopyrightText)}</span>
+        ${footerRightHtml}
       </div>
     </div>
   </footer>`;
@@ -2172,6 +2336,7 @@ export function renderHubHtml(params: {
   // 2. All Categories Grid (3 cols)
   // 3. Latest Published Articles Grid (3 cols)
   // 4. Editorial Newsletter Band
+  const custom = branding.theme_customizations || {};
   const leadPost = posts[0] || null;
   const leadRoute = leadPost ? resolvePostRoute(leadPost, routingMode) : null;
   const leadImg = leadPost ? resolveImageSrc(leadPost, theme.accent) : '';
@@ -2184,17 +2349,22 @@ export function renderHubHtml(params: {
     );
   }
 
+  const effectiveHeroTitle = (custom.hero_title && custom.hero_title.trim()) || (leadPost ? leadPost.title : identity.siteName);
+  const effectiveHeroSubtitle =
+    (custom.hero_subtitle && custom.hero_subtitle.trim()) ||
+    (leadPost && leadPost.excerpt ? leadPost.excerpt.slice(0, 220) : identity.tagline);
+
   const heroSectionHtml = leadPost && leadRoute
     ? `<section class="hero-split-band" aria-label="Featured Story">
         <div class="shell">
           <div class="hero-split-grid">
             <a class="hero-split-media" href="${escapeHtml(leadRoute.web_path)}">
-              <img src="${escapeHtml(leadImg)}" alt="${escapeHtml(leadPost.title)}" width="${leadPost.image_width || 1200}" height="${leadPost.image_height || 750}" fetchpriority="high" decoding="async" />
+              <img src="${escapeHtml(leadImg)}" alt="${escapeHtml(effectiveHeroTitle)}" width="${leadPost.image_width || 1200}" height="${leadPost.image_height || 750}" fetchpriority="high" decoding="async" />
             </a>
             <div>
               ${leadPost.category ? `<span class="kicker">${escapeHtml(leadPost.category)}</span>` : '<span class="kicker">Featured Story</span>'}
-              <h1 class="hero-split-title"><a href="${escapeHtml(leadRoute.web_path)}">${escapeHtml(leadPost.title)}</a></h1>
-              ${leadPost.excerpt ? `<p class="hero-split-excerpt">${escapeHtml(leadPost.excerpt.slice(0, 220))}</p>` : ''}
+              <h1 class="hero-split-title"><a href="${escapeHtml(leadRoute.web_path)}">${escapeHtml(effectiveHeroTitle)}</a></h1>
+              ${effectiveHeroSubtitle ? `<p class="hero-split-excerpt">${escapeHtml(effectiveHeroSubtitle)}</p>` : ''}
               ${leadMetaParts.length ? `<div class="hero-split-meta">${leadMetaParts.join(' &middot; ')}</div>` : ''}
               <a class="hero-read-cta" href="${escapeHtml(leadRoute.web_path)}">Read Full Article &rarr;</a>
             </div>
@@ -2203,17 +2373,18 @@ export function renderHubHtml(params: {
       </section>`
     : `<section class="hero-split-band">
         <div class="shell" style="text-align:center;max-width:700px;">
-          <h1>${escapeHtml(identity.siteName)}</h1>
-          <p class="excerpt">${escapeHtml(identity.tagline)}</p>
+          <h1>${escapeHtml(effectiveHeroTitle)}</h1>
+          <p class="excerpt">${escapeHtml(effectiveHeroSubtitle)}</p>
         </div>
       </section>`;
 
+  const categoriesHeading = (custom.categories_title && custom.categories_title.trim()) || 'All Categories';
   const categoriesSectionHtml = categories.length
-    ? `<section class="section-band-plain section-pad" aria-label="All Categories">
+    ? `<section class="section-band-plain section-pad" aria-label="${escapeHtml(categoriesHeading)}">
         <div class="shell">
           <div class="section-header-row">
             <div>
-              <h2 class="section-title">All Categories</h2>
+              <h2 class="section-title">${escapeHtml(categoriesHeading)}</h2>
               <p class="section-subtitle">Explore our categories.</p>
             </div>
             <span class="section-subtitle">${categories.length} ${categories.length === 1 ? 'Category' : 'Categories'}</span>
@@ -2258,11 +2429,12 @@ export function renderHubHtml(params: {
     })
     .join('');
 
-  const latestSectionHtml = `<section class="section-band-soft section-pad" aria-label="Latest Published Articles">
+  const latestHeading = (custom.latest_title && custom.latest_title.trim()) || 'Latest Published Articles';
+  const latestSectionHtml = `<section class="section-band-soft section-pad" aria-label="${escapeHtml(latestHeading)}">
     <div class="shell">
       <div class="section-header-row">
         <div>
-          <h2 class="section-title">Latest Published Articles</h2>
+          <h2 class="section-title">${escapeHtml(latestHeading)}</h2>
           <p class="section-subtitle">Fresh inspiration and practical guides from ${escapeHtml(identity.siteName)}.</p>
         </div>
         <a class="section-meta-link" href="/sitemap/">View Complete Directory &rarr;</a>
@@ -2271,12 +2443,19 @@ export function renderHubHtml(params: {
     </div>
   </section>`;
 
+  const newsletterHeading =
+    (custom.newsletter_title && custom.newsletter_title.trim()) ||
+    'Practical design advice, straight to your inbox';
+  const newsletterCopy =
+    (custom.newsletter_copy && custom.newsletter_copy.trim()) ||
+    `Get new guides, room ideas, and curated inspiration from ${identity.siteName} — no spam, unsubscribe anytime.`;
+
   const newsletterSectionHtml = `<section class="newsletter-band" aria-label="Newsletter Signup">
     <div class="shell">
       <div class="newsletter-box">
         <span class="kicker">Newsletter</span>
-        <h2 class="newsletter-title">Practical design advice, straight to your inbox</h2>
-        <p class="newsletter-copy">Get new guides, room ideas, and curated inspiration from ${escapeHtml(identity.siteName)} &mdash; no spam, unsubscribe anytime.</p>
+        <h2 class="newsletter-title">${escapeHtml(newsletterHeading)}</h2>
+        <p class="newsletter-copy">${escapeHtml(newsletterCopy)}</p>
         <form class="newsletter-form" data-feedback="Thanks for subscribing to ${escapeHtml(identity.siteName)}!" onsubmit="event.preventDefault(); this.nextElementSibling.textContent=this.dataset.feedback; this.reset();">
           <input type="email" required placeholder="Enter your email address" aria-label="Email address" />
           <button type="submit" class="btn-solid">Subscribe</button>
@@ -2285,6 +2464,10 @@ export function renderHubHtml(params: {
       </div>
     </div>
   </section>`;
+
+  const customBlocksAfterHero = renderCustomContentBlocks(branding, 'after-hero');
+  const customBlocksBeforeNewsletter = renderCustomContentBlocks(branding, 'before-newsletter');
+  const customBlocksBeforeFooter = renderCustomContentBlocks(branding, 'before-footer');
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -2300,9 +2483,12 @@ export function renderHubHtml(params: {
   ${renderHeader(branding, categories, identity)}
   <main>
     ${heroSectionHtml}
+    ${customBlocksAfterHero}
     ${categoriesSectionHtml}
     ${latestSectionHtml}
+    ${customBlocksBeforeNewsletter}
     ${newsletterSectionHtml}
+    ${customBlocksBeforeFooter}
   </main>
   ${renderFooter(branding, categories, identity)}
 </body>

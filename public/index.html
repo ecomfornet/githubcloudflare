@@ -1526,37 +1526,126 @@
     </div>
   </div>
 
-  <!-- Modal Template Live Preview -->
+  <!-- Modal Template Live Preview & Visual Customizer -->
   <div id="templatePreviewModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="templateModalTitle">
     <div class="modal-content template-preview-window">
       <div class="template-modal-header">
-        <div style="display: flex; align-items: center; gap: 0.75rem;">
-          <div style="display: flex; align-items: center; gap: 0.5rem;">
-            <span style="font-size: 1.1rem;">🎨</span>
-            <h2 id="templateModalTitle" class="card-title" style="margin: 0; font-size: 1rem;">Theme Template Live Preview</h2>
+        <div class="template-modal-header-left">
+          <div class="template-modal-title-group">
+            <span aria-hidden="true" style="font-size: 1.05rem;">🎨</span>
+            <h2 id="templateModalTitle" class="card-title" style="margin: 0; font-size: 0.96rem;">Theme Live Preview &amp; Editor</h2>
           </div>
-          <div class="btn-group modal-view-toggle" id="modalViewToggleGroup" style="display: inline-flex; background: rgba(0,0,0,0.3); border-radius: 6px; padding: 2px; border: 1px solid rgba(255,255,255,0.1);">
-            <button type="button" class="btn btn-xs btn-primary modal-view-btn active" id="modalViewHubBtn" data-view="hub" style="font-size: 0.72rem; padding: 0.2rem 0.55rem; font-weight: 600;">🏛️ Front / Hub</button>
-            <button type="button" class="btn btn-xs btn-secondary modal-view-btn" id="modalViewPostBtn" data-view="post" style="font-size: 0.72rem; padding: 0.2rem 0.55rem; font-weight: 600;">📄 Article Guide</button>
+          <div class="btn-group modal-view-toggle" id="modalViewToggleGroup" role="group" aria-label="Preview Page Type">
+            <button type="button" class="btn btn-xs btn-primary modal-view-btn active" id="modalViewHubBtn" data-view="hub">🏛️ Front / Hub</button>
+            <button type="button" class="btn btn-xs btn-secondary modal-view-btn" id="modalViewPostBtn" data-view="post">📄 Article Guide</button>
           </div>
         </div>
-        <div style="display: flex; align-items: center; gap: 0.5rem;">
-          <div class="viewport-btns">
+        <div class="template-modal-header-right">
+          <button type="button" id="toggleThemeEditorBtn" class="btn btn-secondary btn-xs theme-ed-toggle active" aria-expanded="true" aria-controls="themeEditorSidebar">✏️ Customize</button>
+          <div class="viewport-btns" role="group" aria-label="Preview Viewport Width">
             <button type="button" class="viewport-btn modal-vp-btn active" data-width="100%">Desktop</button>
             <button type="button" class="viewport-btn modal-vp-btn" data-width="768px">Tablet</button>
             <button type="button" class="viewport-btn modal-vp-btn" data-width="375px">Mobile</button>
           </div>
-          <button type="button" id="closeTemplateModalBtn" class="btn btn-secondary btn-xs">✕ Close</button>
+          <button type="button" id="closeTemplateModalBtn" class="btn btn-secondary btn-xs" aria-label="Close theme preview modal">✕ Close</button>
         </div>
       </div>
-      <div class="template-modal-body">
-        <iframe id="templateModalIframe" class="template-modal-iframe" title="Interactive Theme Template Live Preview"></iframe>
+
+      <div class="template-modal-workspace" id="templateModalWorkspace">
+        <aside id="themeEditorSidebar" class="theme-editor-sidebar" aria-label="Theme Live Customizer">
+          <div class="theme-ed-tabs" role="tablist" aria-label="Theme customizer sections">
+            <button type="button" class="theme-ed-tab active" id="themeEdTabTitles" role="tab" aria-selected="true" aria-controls="themeEdPanelTitles" data-ed-tab="titles">Titles</button>
+            <button type="button" class="theme-ed-tab" id="themeEdTabBlocks" role="tab" aria-selected="false" aria-controls="themeEdPanelBlocks" data-ed-tab="blocks">Image &amp; Text</button>
+            <button type="button" class="theme-ed-tab" id="themeEdTabFooter" role="tab" aria-selected="false" aria-controls="themeEdPanelFooter" data-ed-tab="footer">Footer</button>
+          </div>
+
+          <div class="theme-ed-scroll">
+            <!-- TAB 1: TITLES -->
+            <div class="theme-ed-panel active" id="themeEdPanelTitles" role="tabpanel" aria-labelledby="themeEdTabTitles" data-ed-panel="titles">
+              <p class="theme-ed-intro">Override homepage headlines and section titles. Leave any field blank to keep the theme default.</p>
+
+              <div class="theme-ed-field">
+                <label for="teHeroTitle">Homepage Hero Title</label>
+                <input type="text" id="teHeroTitle" maxlength="160" placeholder="e.g. Timeless Spaces for Modern Living" />
+              </div>
+
+              <div class="theme-ed-field">
+                <label for="teHeroSubtitle">Hero Subtitle / Intro Text</label>
+                <textarea id="teHeroSubtitle" rows="3" maxlength="360" placeholder="Short editorial description shown under the hero headline..."></textarea>
+              </div>
+
+              <div class="theme-ed-divider"></div>
+
+              <div class="theme-ed-field">
+                <label for="teCategoriesTitle">Categories Section Title</label>
+                <input type="text" id="teCategoriesTitle" maxlength="120" placeholder="e.g. Explore by Category" />
+              </div>
+
+              <div class="theme-ed-field">
+                <label for="teLatestTitle">Latest Articles Section Title</label>
+                <input type="text" id="teLatestTitle" maxlength="120" placeholder="e.g. Latest Editorial Stories" />
+              </div>
+
+              <div class="theme-ed-divider"></div>
+
+              <div class="theme-ed-field">
+                <label for="teNewsletterTitle">Newsletter Box Title</label>
+                <input type="text" id="teNewsletterTitle" maxlength="120" placeholder="e.g. Weekly Design Notes" />
+              </div>
+
+              <div class="theme-ed-field">
+                <label for="teNewsletterCopy">Newsletter Description Text</label>
+                <textarea id="teNewsletterCopy" rows="2" maxlength="320" placeholder="e.g. Curated room tours and styling ideas delivered every Sunday."></textarea>
+              </div>
+            </div>
+
+            <!-- TAB 2: IMAGE & TEXT BLOCKS -->
+            <div class="theme-ed-panel" id="themeEdPanelBlocks" role="tabpanel" aria-labelledby="themeEdTabBlocks" data-ed-panel="blocks">
+              <div class="theme-ed-blocks-bar">
+                <span class="theme-ed-blocks-count" id="themeBlocksCount">0 blocks</span>
+                <button type="button" id="btnAddThemeBlock" class="btn btn-primary btn-xs">+ Add Image + Text Block</button>
+              </div>
+              <p class="theme-ed-intro">Insert split Image + Text sections anywhere on your homepage — upload an image or paste a URL, pick Left or Right layout, and choose placement.</p>
+              <div id="themeBlocksList" class="theme-blocks-list"></div>
+            </div>
+
+            <!-- TAB 3: FOOTER -->
+            <div class="theme-ed-panel" id="themeEdPanelFooter" role="tabpanel" aria-labelledby="themeEdTabFooter" data-ed-panel="footer">
+              <p class="theme-ed-intro">Customize the site-wide footer text shown on your Homepage, Articles, Categories, and Site Pages.</p>
+
+              <div class="theme-ed-field">
+                <label for="teFooterDesc">Footer About / Description Text</label>
+                <textarea id="teFooterDesc" rows="3" maxlength="360" placeholder="e.g. Independent home styling studio sharing timeless interior guides and practical decor plans."></textarea>
+              </div>
+
+              <div class="theme-ed-field">
+                <label for="teFooterCopyright">Footer Copyright Line</label>
+                <input type="text" id="teFooterCopyright" maxlength="180" placeholder="e.g. © 2026 StylesDays Studio. All rights reserved." />
+              </div>
+
+              <div class="theme-ed-field">
+                <label for="teFooterEmail">Footer Contact Email / Note</label>
+                <input type="text" id="teFooterEmail" maxlength="120" placeholder="e.g. hello@yourdomain.com" />
+              </div>
+            </div>
+          </div>
+
+          <div class="theme-ed-footer">
+            <button type="button" id="btnResetThemeEdits" class="btn btn-secondary btn-xs">↺ Reset Edits</button>
+            <span class="theme-ed-status" id="themeEdLiveStatus">Live draft</span>
+          </div>
+        </aside>
+
+        <div class="template-modal-canvas">
+          <iframe id="templateModalIframe" class="template-modal-iframe" title="Interactive Theme Template Live Preview"></iframe>
+        </div>
       </div>
-      <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.65rem 1.25rem; background: var(--bg-secondary); border-top: 1px solid var(--border-color);">
-        <div id="templateModalMeta" style="font-size: 0.78rem; color: var(--text-secondary); font-family: var(--font-mono);">
+
+      <div class="template-modal-footer">
+        <div id="templateModalMeta" class="template-modal-meta">
           Theme: <strong id="templateModalThemeBadge" style="color: #38BDF8;">Editorial Warm</strong> | Routing: <strong id="templateModalRoutingBadge" style="color: #34D399;">Single Slug</strong>
         </div>
-        <button type="button" id="applyTemplateThemeBtn" class="btn btn-primary btn-sm">✓ Select &amp; Apply</button>
+        <button type="button" id="applyTemplateThemeBtn" class="btn btn-primary btn-sm">💾 Save &amp; Apply Theme</button>
       </div>
     </div>
   </div>

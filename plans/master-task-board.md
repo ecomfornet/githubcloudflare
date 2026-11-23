@@ -47,5 +47,18 @@
 | `public/app.js`, `public/index.html`, `public/style.css` | Fixed `api()` JSON body forwarding on `DELETE`/`PATCH`, validated URL schemes & escaped GitHub preview inputs, added `pseo_nested_silo` option/label, awaited async theme modal saves, and fixed mobile `390x844` horizontal overflow containment | Verified (`node --check` + Desktop & Mobile Chromium E2E, 0 console/page/network errors) |
 | `src/store.test.ts` | Added Test #18 covering `pseo_nested_silo`, nested sanitization across all 3 sanitizers, static-page local image build sync, and `clearActiveProjectData` invalid-ID guard | 18/18 passing |
 
+## Theme Preview Live Visual Customizer (Titles, Image + Text Blocks, Footer) Log
+
+| File Path | Key Exports / Changes | Verification Status |
+|---|---|---|
+| `plans/architecture-spec.md` | Section 6 blueprint for Theme Preview Live Visual Customizer | Approved |
+| `src/types.ts` | `ThemeContentBlock`, `ThemeCustomizations`, `normalizeThemeCustomizations` | Verified (`tsc --noEmit` + 19/19 tests) |
+| `src/templates.ts` | `.custom-media-band` responsive split layout CSS (all 3 themes), `renderCustomContentBlocks`, title & footer overrides in `renderHubHtml` & `renderFooter` | Verified (19/19 tests) |
+| `src/store.ts` | Per-project `theme_customizations` isolation, draft `renderPreview`, `uploadThemeBlockImage` (Sharp WebP + sanitized SVG), build asset sync | Verified (19/19 tests) |
+| `server.ts` | `POST /api/upload-block-image` and `theme_customizations` forwarding in `POST /api/preview` | Verified live |
+| `public/index.html`, `public/style.css`, `public/app.js` | Split-pane collapsible Customize sidebar inside `#templatePreviewModal` (`Titles`, `Image & Text`, `Footer`), live debounced preview, image upload, reorder/delete, Reset Edits, Save & Apply | Verified (`node --check` + live Chromium E2E) |
+| `src/store.test.ts` | Added Test #19 covering normalization, Image+Text upload/build sync, draft preview, all 3 themes, and per-project isolation | 19/19 passing |
+
+
 
 

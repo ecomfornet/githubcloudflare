@@ -7,6 +7,7 @@ import {
   deriveBrandFromDomain,
   maskToken,
   normalizeRoutingMode,
+  normalizeThemeCustomizations,
   resolvePostRoute,
   slugify,
 } from './types.ts';
@@ -1611,6 +1612,165 @@ test('full-project audit regressions: pseo_nested_silo routing, nested XSS strip
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
+
+test('Theme Preview Live Customizer: titles, Image+Text blocks, footer text, image upload, build asset copy, and per-project isolation', async () => {
+  const { renderHubHtml, renderPostHtml } = await import('./templates.ts');
+
+  // 1. Normalization strips unsafe URL schemes and keeps safe assets/URLs
+  const normalized = normalizeThemeCustomizations({
+    hero_title: '  Warm Botanical Living  ',
+    footer_copyright: '© 2026 Atelier Press',
+    content_blocks: [
+      {
+        id: 'b1',
+        eyebrow: 'Studio Note',
+        title: 'Natural Light First',
+        body: 'Paragraph one.\n\nParagraph two.',
+        image_url: 'javascript:alert(1)',
+        cta_label: 'Bad Link',
+        cta_url: 'javascript:evil()',
+        layout: 'image-right',
+        position: 'after-hero',
+      },
+      {
+        id: 'b2',
+        title: 'Handcrafted Wood',
+        body: 'Oak and walnut joinery.',
+        image_url: '/assets/images/safe-block.webp',
+        cta_label: 'About Us',
+        cta_url: '/about/',
+        layout: 'image-left',
+        position: 'before-footer',
+      },
+    ],
+  });
+  assert.equal(normalized.hero_title, 'Warm Botanical Living');
+  assert.equal(normalized.content_blocks?.length, 2);
+  assert.equal(normalized.content_blocks?.[0].image_url || '', '');
+  assert.equal(normalized.content_blocks?.[0].cta_url || '', '');
+  assert.equal(normalized.content_blocks?.[0].layout, 'image-right');
+  assert.equal(normalized.content_blocks?.[1].image_url, '/assets/images/safe-block.webp');
+  assert.equal(normalized.content_blocks?.[1].cta_url, '/about/');
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pseo-theme-customizer-'));
+  try {
+    const store = new DashboardStore({ workspaceDir: tmpDir });
+    await store.executeIngestion({ sourceType: 'sitemap', urlOrList: '' });
+
+    // 2. Upload a real 1x1 PNG to uploadThemeBlockImage -> converts to WebP in /assets/images/
+    const tinyPngBase64 =
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X2dIAAAAASUVORK5CYII=';
+    const uploaded = await store.uploadThemeBlockImage({
+      image_base64: tinyPngBase64,
+      filename: 'studio-feature.png',
+    });
+    assert.equal(uploaded.success, true);
+    const uploadedUrl = String(uploaded.image_url || '');
+    assert.match(uploadedUrl, /^\/assets\/images\/theme-block-.*\.webp$/);
+    const uploadedFilename = path.basename(uploadedUrl);
+    assert.equal(fs.existsSync(path.join(tmpDir, 'assets', 'images', uploadedFilename)), true);
+
+    const customDraft = {
+      hero_title: 'Bespoke Nordic Sanctuary',
+      hero_subtitle: 'Curated calm spaces for every season.',
+      categories_title: 'Browse Rooms',
+      latest_title: 'Fresh Dispatches',
+      newsletter_title: 'Sunday Journal',
+      newsletter_copy: 'One thoughtful letter every week.',
+      footer_description: 'Independent editorial studio crafting calm interiors.',
+      footer_copyright: '© 2026 Bespoke Sanctuary Media.',
+      footer_email: 'studio@sanctuary.example',
+      content_blocks: [
+        {
+          id: 'blk-1',
+          eyebrow: 'Design Philosophy',
+          title: 'Materials That Age Gracefully',
+          body: 'Raw oak, limewash walls, and unbleached linen bring lasting warmth.',
+          image_url: uploadedUrl,
+          image_alt: 'Oak and linen interior',
+          layout: 'image-right' as const,
+          position: 'after-hero' as const,
+          cta_label: 'Read Our Story',
+          cta_url: '/about/',
+        },
+      ],
+    };
+
+    // 3. Draft renderPreview renders all overrides WITHOUT mutating saved config
+    const draftHtml = store.renderPreview({
+      theme: 'pinterest-mag',
+      viewMode: 'hub',
+      themeCustomizations: customDraft,
+    });
+    assert.match(draftHtml, /Bespoke Nordic Sanctuary/);
+    assert.match(draftHtml, /Browse Rooms/);
+    assert.match(draftHtml, /Fresh Dispatches/);
+    assert.match(draftHtml, /Sunday Journal/);
+    assert.match(draftHtml, /Materials That Age Gracefully/);
+    assert.match(draftHtml, /layout-image-right/);
+    assert.match(draftHtml, /Independent editorial studio crafting calm interiors\./);
+    assert.match(draftHtml, /© 2026 Bespoke Sanctuary Media\./);
+    assert.match(draftHtml, /studio@sanctuary\.example/);
+    assert.equal(store.config.branding.theme_customizations?.hero_title, undefined);
+
+    // 4. All 3 themes render custom titles, Image+Text blocks, and custom footer cleanly
+    const posts = store.listPosts();
+    const categories = store.manifest.categories;
+    const brandingWithCustom = { ...store.config.branding, theme_customizations: customDraft };
+    for (const themeKey of ['editorial-warm', 'nordic-studio', 'pinterest-mag'] as const) {
+      const hubHtml = renderHubHtml({
+        posts,
+        categories,
+        themeKey,
+        branding: brandingWithCustom,
+        routingMode: 'single',
+        baseUrl: 'https://sanctuary.example',
+      });
+      assert.match(hubHtml, /Bespoke Nordic Sanctuary/, `Missing hero title in ${themeKey}`);
+      assert.match(hubHtml, /custom-media-band/, `Missing custom media block in ${themeKey}`);
+      assert.match(hubHtml, /© 2026 Bespoke Sanctuary Media\./, `Missing footer copyright in ${themeKey}`);
+
+      const postHtml = renderPostHtml({
+        post: posts[0],
+        allPosts: posts,
+        categories,
+        themeKey,
+        branding: brandingWithCustom,
+        routingMode: 'single',
+        baseUrl: 'https://sanctuary.example',
+      });
+      assert.match(postHtml, /Independent editorial studio crafting calm interiors\./, `Missing footer desc on article in ${themeKey}`);
+      assert.match(postHtml, /studio@sanctuary\.example/, `Missing footer email on article in ${themeKey}`);
+    }
+
+    // 5. Save config, run build -> dist includes uploaded block image + customized index.html
+    store.updateConfig({
+      build: { theme: 'nordic-studio' },
+      branding: { theme_customizations: customDraft },
+    });
+    const build = store.runBuild({ clean: true, targetCloud: 'cloudflare', theme: 'nordic-studio' });
+    assert.equal(build.success, true);
+    const outDir = String(build.output_dir);
+    assert.equal(fs.existsSync(path.join(outDir, 'assets', 'images', uploadedFilename)), true);
+    const builtHome = fs.readFileSync(path.join(outDir, 'index.html'), 'utf-8');
+    assert.match(builtHome, /Bespoke Nordic Sanctuary/);
+    assert.match(builtHome, /Materials That Age Gracefully/);
+    assert.match(builtHome, /© 2026 Bespoke Sanctuary Media\./);
+
+    // 6. Per-project isolation: creating a second project starts clean, switching back restores customizations
+    const origProjectId = store.config.active_project;
+    store.createProject({ name: 'Second Studio', platform: 'cloudflare' });
+    assert.equal(store.config.branding.theme_customizations?.hero_title, undefined);
+    assert.equal(store.config.branding.theme_customizations?.content_blocks?.length || 0, 0);
+
+    store.switchProject(origProjectId);
+    assert.equal(store.config.branding.theme_customizations?.hero_title, 'Bespoke Nordic Sanctuary');
+    assert.equal(store.config.branding.theme_customizations?.content_blocks?.length, 1);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 
 
 

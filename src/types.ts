@@ -36,6 +36,32 @@ export interface DashboardConfig {
   port: number;
 }
 
+export interface ThemeContentBlock {
+  id: string;
+  eyebrow?: string;
+  title: string;
+  body: string;
+  image_url: string;
+  image_alt?: string;
+  layout: 'image-left' | 'image-right';
+  position: 'after-hero' | 'before-newsletter' | 'before-footer';
+  cta_label?: string;
+  cta_url?: string;
+}
+
+export interface ThemeCustomizations {
+  hero_title?: string;
+  hero_subtitle?: string;
+  categories_title?: string;
+  latest_title?: string;
+  newsletter_title?: string;
+  newsletter_copy?: string;
+  footer_description?: string;
+  footer_copyright?: string;
+  footer_email?: string;
+  content_blocks?: ThemeContentBlock[];
+}
+
 export interface BrandingConfig {
   brand_name: string;
   tagline: string;
@@ -47,6 +73,7 @@ export interface BrandingConfig {
   enable_eeat: boolean;
   social_links: Record<string, string>;
   custom_head_code?: string;
+  theme_customizations?: ThemeCustomizations;
 }
 
 export interface ProjectItem {
@@ -69,6 +96,7 @@ export interface ProjectItem {
   max_posts: number;
   download_images: boolean;
   custom_head_code?: string;
+  theme_customizations?: ThemeCustomizations;
 }
 
 export interface AppConfig {
@@ -245,6 +273,94 @@ export function normalizeRoutingMode(
   if (m === 'silo_nested' || m === 'silo') return 'silo_nested';
   if (m === 'pseo_nested_silo' || m === 'pseo_silo' || m === 'blog_slug') return 'pseo_nested_silo';
   return 'single';
+}
+
+function sanitizeSafeBlockUrl(raw: unknown, allowRelative = true): string {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  if (/^(javascript|vbscript|data):/i.test(s)) return '';
+  if (allowRelative && (s.startsWith('/') || s.startsWith('#'))) {
+    if (s.startsWith('//')) return '';
+    return s.slice(0, 600);
+  }
+  if (/^https?:\/\//i.test(s)) {
+    try {
+      const u = new URL(s);
+      if (u.protocol === 'http:' || u.protocol === 'https:') return u.toString().slice(0, 600);
+    } catch {
+      return '';
+    }
+  }
+  return '';
+}
+
+export function normalizeThemeCustomizations(raw?: unknown): ThemeCustomizations {
+  if (!raw || typeof raw !== 'object') return {};
+  const obj = raw as Record<string, unknown>;
+  const cleanStr = (v: unknown, maxLen: number): string =>
+    typeof v === 'string' ? v.trim().slice(0, maxLen) : '';
+
+  const out: ThemeCustomizations = {};
+  const heroTitle = cleanStr(obj.hero_title, 220);
+  const heroSubtitle = cleanStr(obj.hero_subtitle, 600);
+  const categoriesTitle = cleanStr(obj.categories_title, 120);
+  const latestTitle = cleanStr(obj.latest_title, 120);
+  const newsletterTitle = cleanStr(obj.newsletter_title, 180);
+  const newsletterCopy = cleanStr(obj.newsletter_copy, 420);
+  const footerDescription = cleanStr(obj.footer_description, 500);
+  const footerCopyright = cleanStr(obj.footer_copyright, 220);
+  const footerEmail = cleanStr(obj.footer_email, 160);
+
+  if (heroTitle) out.hero_title = heroTitle;
+  if (heroSubtitle) out.hero_subtitle = heroSubtitle;
+  if (categoriesTitle) out.categories_title = categoriesTitle;
+  if (latestTitle) out.latest_title = latestTitle;
+  if (newsletterTitle) out.newsletter_title = newsletterTitle;
+  if (newsletterCopy) out.newsletter_copy = newsletterCopy;
+  if (footerDescription) out.footer_description = footerDescription;
+  if (footerCopyright) out.footer_copyright = footerCopyright;
+  if (footerEmail) out.footer_email = footerEmail;
+
+  if (Array.isArray(obj.content_blocks)) {
+    const blocks: ThemeContentBlock[] = [];
+    for (let i = 0; i < Math.min(obj.content_blocks.length, 12); i += 1) {
+      const item = obj.content_blocks[i];
+      if (!item || typeof item !== 'object') continue;
+      const b = item as Record<string, unknown>;
+      const title = cleanStr(b.title, 200);
+      const body = cleanStr(b.body, 2500);
+      const imageUrl = sanitizeSafeBlockUrl(b.image_url, true);
+      if (!title && !body && !imageUrl) continue;
+
+      const rawId = cleanStr(b.id, 64).replace(/[^a-zA-Z0-9_-]/g, '');
+      const layout = b.layout === 'image-right' ? 'image-right' : 'image-left';
+      const posRaw = String(b.position || 'after-hero').trim();
+      const position: ThemeContentBlock['position'] =
+        posRaw === 'before-newsletter' || posRaw === 'before-footer' ? posRaw : 'after-hero';
+      const eyebrow = cleanStr(b.eyebrow, 80);
+      const imageAlt = cleanStr(b.image_alt, 180);
+      const ctaLabel = cleanStr(b.cta_label, 80);
+      const ctaUrl = sanitizeSafeBlockUrl(b.cta_url, true);
+
+      blocks.push({
+        id: rawId || `block-${i + 1}`,
+        ...(eyebrow ? { eyebrow } : {}),
+        title,
+        body,
+        image_url: imageUrl,
+        ...(imageAlt ? { image_alt: imageAlt } : {}),
+        layout,
+        position,
+        ...(ctaLabel ? { cta_label: ctaLabel } : {}),
+        ...(ctaUrl ? { cta_url: ctaUrl } : {}),
+      });
+    }
+    if (blocks.length > 0) {
+      out.content_blocks = blocks;
+    }
+  }
+
+  return out;
 }
 
 export function resolvePostRoute(

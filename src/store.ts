@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import sharp from 'sharp';
 import type {
   AppConfig,
   CategoryItem,
@@ -19,6 +20,7 @@ import {
   maskToken,
   normalizePost,
   normalizeRoutingMode,
+  normalizeThemeCustomizations,
   resolvePostRoute,
   slugify,
   stripProtocol,
@@ -545,6 +547,7 @@ export class DashboardStore {
     this.config.build.theme = theme;
     this.config.build.routing_mode = routingMode;
     this.config.branding.custom_head_code = '';
+    this.config.branding.theme_customizations = {};
     this.staticPageOverrides = {};
 
     this.saveConfig();
@@ -658,6 +661,7 @@ export class DashboardStore {
     if (typeof item.custom_head_code === 'string') {
       this.config.branding.custom_head_code = item.custom_head_code;
     }
+    this.config.branding.theme_customizations = normalizeThemeCustomizations(item.theme_customizations);
     this.staticPageOverrides = this.loadStaticPageOverrides(pid);
 
     this.saveConfig();
@@ -718,8 +722,13 @@ export class DashboardStore {
     if (customLogoPath) {
       protectedFilenames.add(path.basename(customLogoPath));
     }
-    for (const [otherId] of Object.entries(this.projects)) {
+    for (const [otherId, otherProj] of Object.entries(this.projects)) {
       if (otherId === pid) continue;
+      for (const blk of otherProj?.theme_customizations?.content_blocks || []) {
+        if (blk.image_url && blk.image_url.startsWith('/assets/images/')) {
+          protectedFilenames.add(path.basename(blk.image_url));
+        }
+      }
       try {
         const otherManifest = this.loadManifestFile(this.resolveManifestPath(otherId));
         for (const p of Object.values(otherManifest.posts || {})) {
@@ -970,6 +979,16 @@ export class DashboardStore {
       this.config.branding.custom_head_code = data.custom_head_code.trim().slice(0, 50000);
     }
 
+    const rawThemeCustom =
+      br.theme_customizations !== undefined
+        ? br.theme_customizations
+        : data.theme_customizations !== undefined
+          ? data.theme_customizations
+          : undefined;
+    if (rawThemeCustom !== undefined) {
+      this.config.branding.theme_customizations = normalizeThemeCustomizations(rawThemeCustom);
+    }
+
     const social = (br.social_links || data.social_links) as Record<string, unknown> | undefined;
     if (social && typeof social === 'object') {
       for (const [k, v] of Object.entries(social)) {
@@ -990,6 +1009,9 @@ export class DashboardStore {
       }
       if (typeof br.custom_head_code === 'string' || typeof data.custom_head_code === 'string') {
         active.custom_head_code = this.config.branding.custom_head_code || '';
+      }
+      if (rawThemeCustom !== undefined) {
+        active.theme_customizations = this.config.branding.theme_customizations;
       }
       this.config.projects[this.activeProjectId] = active;
     }
@@ -1071,12 +1093,21 @@ export class DashboardStore {
     theme?: string;
     routingMode?: string;
     viewMode?: string;
+    themeCustomizations?: unknown;
   }): string {
     const themeKey = opts.theme || this.config.build.theme || 'nordic-studio';
     const routingMode = normalizeRoutingMode(opts.routingMode || this.config.build.routing_mode);
     const cleanSlug = (opts.slug || '').replace(/^\/+|\/+$/g, '');
     const isHub =
       opts.viewMode === 'hub' || ['__hub__', 'hub', 'index', 'home', '__home__'].includes(cleanSlug);
+
+    const effectiveBranding =
+      opts.themeCustomizations !== undefined
+        ? {
+            ...this.config.branding,
+            theme_customizations: normalizeThemeCustomizations(opts.themeCustomizations),
+          }
+        : this.config.branding;
 
     const activeProj = this.projects[this.activeProjectId];
     const customDom = activeProj?.cf_custom_domain || this.config.cloudflare.custom_domain || '';
@@ -1095,7 +1126,7 @@ export class DashboardStore {
         posts,
         categories: cats,
         themeKey,
-        branding: this.config.branding,
+        branding: effectiveBranding,
         routingMode,
         baseUrl,
         customDomain: customDom,
@@ -1121,7 +1152,7 @@ export class DashboardStore {
       post: targetPost,
       allPosts: Object.values(this.manifest.posts),
       themeKey,
-      branding: this.config.branding,
+      branding: effectiveBranding,
       categories: this.manifest.categories,
       routingMode,
       baseUrl,
@@ -1825,6 +1856,11 @@ export class DashboardStore {
           }
         }
       }
+      for (const blk of this.config.branding.theme_customizations?.content_blocks || []) {
+        if (blk.image_url && blk.image_url.startsWith('/assets/images/')) {
+          referenced.add(path.basename(blk.image_url));
+        }
+      }
 
       fs.mkdirSync(dstAssets, { recursive: true });
       for (const f of fs.readdirSync(srcAssets)) {
@@ -1947,6 +1983,58 @@ export class DashboardStore {
       brand_name: this.config.branding.brand_name,
       tagline: this.config.branding.tagline,
     };
+  }
+
+  async uploadThemeBlockImage(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const assetsDir = path.join(this.workspaceDir, 'assets', 'images');
+    fs.mkdirSync(assetsDir, { recursive: true });
+
+    const dataUrl = String(body.data || body.image_base64 || '');
+    if (!dataUrl.startsWith('data:')) {
+      throw new Error('Invalid image payload. Expected a base64 data URL.');
+    }
+    const [header, b64] = dataUrl.split(',', 2);
+    const mime = header.split(';')[0].replace('data:', '').toLowerCase().trim();
+    const allowedMimes = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/svg+xml']);
+    if (!allowedMimes.has(mime)) {
+      throw new Error(`Unsupported image format '${mime}'. Use PNG, JPEG, WebP, or SVG.`);
+    }
+
+    let bytes: Buffer = Buffer.from(b64 || '', 'base64');
+    if (bytes.length === 0 || bytes.length > 10 * 1024 * 1024) {
+      throw new Error('Image file must be non-empty and under 10MB.');
+    }
+
+    const token = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    let filename = '';
+
+    if (mime === 'image/svg+xml') {
+      const sanitizedSvg = bytes
+        .toString('utf-8')
+        .replace(/<script\b[\s\S]*?<\/script>/gi, '')
+        .replace(/<foreignObject\b[\s\S]*?<\/foreignObject>/gi, '')
+        .replace(/\son[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+        .replace(/(?:href|xlink:href)\s*=\s*(?:"\s*javascript:[^"]*"|'\s*javascript:[^']*')/gi, '');
+      filename = `theme-block-${token}.svg`;
+      fs.writeFileSync(path.join(assetsDir, filename), Buffer.from(sanitizedSvg, 'utf-8'));
+    } else {
+      try {
+        const webpBuf = await sharp(bytes, { failOn: 'none' })
+          .resize({ width: 1400, withoutEnlargement: true })
+          .webp({ quality: 84 })
+          .toBuffer();
+        filename = `theme-block-${token}.webp`;
+        fs.writeFileSync(path.join(assetsDir, filename), webpBuf);
+      } catch {
+        const ext = mime === 'image/png' ? '.png' : mime === 'image/webp' ? '.webp' : '.jpg';
+        filename = `theme-block-${token}${ext}`;
+        fs.writeFileSync(path.join(assetsDir, filename), bytes);
+      }
+    }
+
+    const imageUrl = `/assets/images/${filename}`;
+    this.log(`[THEME BLOCK] Uploaded image asset: ${imageUrl}`);
+    return { success: true, image_url: imageUrl };
   }
 
   async verifyCloudflareCredentials(tokenInput?: string, accountIdInput?: string): Promise<Record<string, unknown>> {
