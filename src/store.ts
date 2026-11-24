@@ -3,6 +3,7 @@ import path from 'node:path';
 import sharp from 'sharp';
 import type {
   AppConfig,
+  BrandingConfig,
   CategoryItem,
   DeployJob,
   DiffSummary,
@@ -14,6 +15,7 @@ import type {
 } from './types.ts';
 import {
   createDefaultConfig,
+  createProjectBranding,
   deriveBrandFromDomain,
   deriveCategories,
   getCloudflareLiveUrl,
@@ -262,25 +264,123 @@ export class DashboardStore {
     };
   }
 
+  private snapshotActiveProjectFromConfig(): void {
+    const active = this.projects[this.activeProjectId];
+    if (!active) return;
+    active.theme = this.config.build.theme || active.theme || 'nordic-studio';
+    active.routing_mode = normalizeRoutingMode(this.config.build.routing_mode || active.routing_mode || 'single');
+    if (this.config.build.output_dir) active.output_dir = this.config.build.output_dir;
+    active.cf_project_name = this.config.cloudflare.project_name || active.cf_project_name || active.id;
+    active.cf_custom_domain = this.config.cloudflare.custom_domain || '';
+    active.cf_deployment_type = this.config.cloudflare.deployment_type || 'workers_assets';
+    active.cf_compatibility_date = this.config.cloudflare.compatibility_date || '2024-11-01';
+    active.gh_owner = this.config.github.owner || '';
+    active.gh_repo = this.config.github.repo || '';
+    active.gh_branch = this.config.github.branch || 'main';
+    active.gh_is_org = this.config.github.is_org !== false;
+    active.gh_base_path = this.config.github.base_path || '';
+    active.sitemap_url = this.config.ingestion.sitemap_url || '';
+    active.wp_api_url = this.config.ingestion.wp_api_url || '';
+    active.max_posts = Number.isFinite(Number(this.config.ingestion.max_posts))
+      ? Number(this.config.ingestion.max_posts)
+      : 60;
+    active.download_images = this.config.ingestion.download_images !== false;
+    const clonedBranding = createProjectBranding(
+      deriveBrandFromDomain(active.cf_custom_domain, active.name || active.id),
+      this.config.branding
+    );
+    active.branding = clonedBranding;
+    active.custom_head_code = clonedBranding.custom_head_code || '';
+    active.theme_customizations = normalizeThemeCustomizations(clonedBranding.theme_customizations);
+    this.config.projects[this.activeProjectId] = active;
+  }
+
+  private hydrateConfigFromProject(item: ProjectItem): void {
+    this.config.build.theme = item.theme || 'nordic-studio';
+    this.config.build.routing_mode = normalizeRoutingMode(item.routing_mode || 'single');
+    this.config.build.output_dir = item.output_dir || path.join('dist', item.cf_project_name || item.id);
+
+    this.config.cloudflare.project_name = item.cf_project_name || item.id;
+    this.config.cloudflare.custom_domain = item.cf_custom_domain || '';
+    this.config.cloudflare.deployment_type = item.cf_deployment_type || 'workers_assets';
+    this.config.cloudflare.compatibility_date = item.cf_compatibility_date || '2024-11-01';
+
+    this.config.github.owner = item.gh_owner || '';
+    this.config.github.repo = item.gh_repo || '';
+    this.config.github.branch = item.gh_branch || 'main';
+    this.config.github.is_org = item.gh_is_org !== false;
+    this.config.github.base_path = item.gh_base_path || '';
+
+    this.config.ingestion.sitemap_url = item.sitemap_url || '';
+    this.config.ingestion.wp_api_url = item.wp_api_url || '';
+    this.config.ingestion.max_posts = Number.isFinite(Number(item.max_posts)) ? Number(item.max_posts) : 60;
+    this.config.ingestion.download_images = item.download_images !== false;
+
+    const fallbackBrand = deriveBrandFromDomain(item.cf_custom_domain || '', item.name || item.id);
+    const hydratedBranding = createProjectBranding(fallbackBrand, {
+      ...(item.branding || {}),
+      custom_head_code:
+        item.branding?.custom_head_code !== undefined
+          ? item.branding.custom_head_code
+          : item.custom_head_code || '',
+      theme_customizations:
+        item.branding?.theme_customizations !== undefined
+          ? item.branding.theme_customizations
+          : item.theme_customizations,
+    });
+    if (hydratedBranding.logo_path && hydratedBranding.logo_path.startsWith('/assets/')) {
+      const localAsset = path.join(this.workspaceDir, hydratedBranding.logo_path.replace(/^\/+/, ''));
+      if (!fs.existsSync(localAsset)) {
+        hydratedBranding.logo_path = '';
+      }
+    }
+    this.config.branding = hydratedBranding;
+    item.branding = createProjectBranding(fallbackBrand, hydratedBranding);
+    item.custom_head_code = hydratedBranding.custom_head_code || '';
+    item.theme_customizations = normalizeThemeCustomizations(hydratedBranding.theme_customizations);
+  }
+
   private initProjects(): void {
     this.projects = {};
     for (const [pid, pdata] of Object.entries(this.config.projects || {})) {
       if (pdata && typeof pdata === 'object') {
+        const fallbackBrand = deriveBrandFromDomain(pdata.cf_custom_domain || '', pdata.name || pid);
+        const normalizedBranding = pdata.branding
+          ? createProjectBranding(fallbackBrand, {
+              ...pdata.branding,
+              custom_head_code:
+                pdata.branding.custom_head_code !== undefined
+                  ? pdata.branding.custom_head_code
+                  : pdata.custom_head_code || '',
+              theme_customizations:
+                pdata.branding.theme_customizations !== undefined
+                  ? pdata.branding.theme_customizations
+                  : pdata.theme_customizations,
+            })
+          : undefined;
         this.projects[pid] = {
           ...pdata,
           id: pid,
           name: pdata.name || pid,
           platform: pdata.platform || 'cloudflare',
           theme: pdata.theme || this.config.build.theme || 'nordic-studio',
-          routing_mode: pdata.routing_mode || this.config.build.routing_mode || 'single',
-          max_posts: Number(pdata.max_posts || 60),
+          routing_mode: normalizeRoutingMode(pdata.routing_mode || this.config.build.routing_mode || 'single'),
+          max_posts: Number.isFinite(Number(pdata.max_posts)) ? Number(pdata.max_posts) : 60,
           download_images: pdata.download_images !== false,
+          cf_deployment_type: pdata.cf_deployment_type || 'workers_assets',
+          cf_compatibility_date: pdata.cf_compatibility_date || '2024-11-01',
+          wp_api_url: pdata.wp_api_url ?? '',
+          branding: normalizedBranding,
         };
       }
     }
 
     if (Object.keys(this.projects).length === 0) {
       const defaultId = 'stylesdays';
+      const defaultBranding = createProjectBranding(
+        deriveBrandFromDomain(this.config.cloudflare.custom_domain || '', defaultId),
+        this.config.branding
+      );
       const defaultProj: ProjectItem = {
         id: defaultId,
         name: 'stylesdays',
@@ -288,18 +388,24 @@ export class DashboardStore {
         platform: 'cloudflare',
         cf_project_name: this.config.cloudflare.project_name || defaultId,
         cf_custom_domain: this.config.cloudflare.custom_domain || '',
+        cf_deployment_type: this.config.cloudflare.deployment_type || 'workers_assets',
+        cf_compatibility_date: this.config.cloudflare.compatibility_date || '2024-11-01',
         gh_owner: this.config.github.owner || '',
         gh_repo: this.config.github.repo || '',
         gh_branch: this.config.github.branch || 'main',
         gh_is_org: this.config.github.is_org,
         gh_base_path: this.config.github.base_path || '',
         sitemap_url: this.config.ingestion.sitemap_url || '',
+        wp_api_url: this.config.ingestion.wp_api_url || '',
         theme: this.config.build.theme || 'nordic-studio',
-        routing_mode: this.config.build.routing_mode || 'single',
+        routing_mode: normalizeRoutingMode(this.config.build.routing_mode || 'single'),
         manifest_path: 'pseo_manifest.json',
         output_dir: path.join('dist', this.config.cloudflare.project_name || defaultId),
         max_posts: this.config.ingestion.max_posts || 100,
         download_images: this.config.ingestion.download_images,
+        custom_head_code: defaultBranding.custom_head_code || '',
+        theme_customizations: defaultBranding.theme_customizations,
+        branding: defaultBranding,
       };
       this.projects[defaultId] = defaultProj;
       this.config.projects[defaultId] = defaultProj;
@@ -316,13 +422,40 @@ export class DashboardStore {
       this.config.active_project = firstId;
     }
 
+    // Backfill legacy projects that were persisted before per-project branding existed
+    for (const [pid, proj] of Object.entries(this.projects)) {
+      if (!proj.branding) {
+        if (pid === this.activeProjectId) {
+          proj.branding = createProjectBranding(
+            deriveBrandFromDomain(proj.cf_custom_domain || '', proj.name || pid),
+            {
+              ...this.config.branding,
+              custom_head_code: proj.custom_head_code || this.config.branding.custom_head_code || '',
+              theme_customizations:
+                proj.theme_customizations && Object.keys(proj.theme_customizations).length > 0
+                  ? proj.theme_customizations
+                  : this.config.branding.theme_customizations,
+            }
+          );
+          if (!proj.wp_api_url && this.config.ingestion.wp_api_url) {
+            proj.wp_api_url = this.config.ingestion.wp_api_url;
+          }
+        } else {
+          proj.branding = createProjectBranding(
+            deriveBrandFromDomain(proj.cf_custom_domain || '', proj.name || pid),
+            {
+              custom_head_code: proj.custom_head_code || '',
+              theme_customizations: proj.theme_customizations,
+            }
+          );
+        }
+      }
+      this.config.projects[pid] = proj;
+    }
+
     const activeProj = this.projects[this.activeProjectId];
     if (activeProj) {
-      if (typeof activeProj.custom_head_code === 'string' && activeProj.custom_head_code.trim()) {
-        this.config.branding.custom_head_code = activeProj.custom_head_code;
-      } else if (typeof this.config.branding.custom_head_code === 'string' && this.config.branding.custom_head_code.trim()) {
-        activeProj.custom_head_code = this.config.branding.custom_head_code;
-      }
+      this.hydrateConfigFromProject(activeProj);
     }
 
     const projManifest = this.resolveManifestPath(this.activeProjectId);
@@ -478,6 +611,10 @@ export class DashboardStore {
     if (!cleanName) {
       throw new Error('Project name cannot be empty');
     }
+
+    // Preserve outgoing active project's full settings before switching to the new project
+    this.snapshotActiveProjectFromConfig();
+
     const basePid = slugify(cleanName) || 'project';
     let pid = basePid;
     let counter = 1;
@@ -489,14 +626,14 @@ export class DashboardStore {
     const platform = String(input.platform || 'cloudflare').trim() || 'cloudflare';
     const cfProj = String(input.cf_project_name || '').trim() || pid;
     const cfCustomDomain = stripProtocol(String(input.cf_custom_domain || ''));
-    const ghOwner = String(input.gh_owner || this.config.github.owner || '').trim();
+    const ghOwner = String(input.gh_owner || '').trim();
     const ghRepo =
       String(input.gh_repo || '').trim() || (ghOwner ? `${ghOwner}.github.io` : `${pid}.github.io`);
     const ghBranch = String(input.gh_branch || 'main').trim() || 'main';
     const ghIsOrg = input.gh_is_org !== false;
     const sitemapUrl = String(input.sitemap_url || '').trim();
-    const theme = String(input.theme || this.config.build.theme || 'editorial-warm').trim();
-    const routingMode = normalizeRoutingMode(String(input.routing_mode || this.config.build.routing_mode || 'single'));
+    const theme = String(input.theme || 'editorial-warm').trim();
+    const routingMode = normalizeRoutingMode(String(input.routing_mode || 'single'));
 
     const projDir = path.join(this.workspaceDir, 'scraped_data', pid);
     const manifestFile = path.join(projDir, 'manifest.json');
@@ -511,6 +648,13 @@ export class DashboardStore {
     };
     fs.writeFileSync(manifestFile, JSON.stringify(emptyManifest, null, 2), 'utf-8');
 
+    const freshBrandName = deriveBrandFromDomain(cfCustomDomain, cleanName);
+    const freshBranding = createProjectBranding(freshBrandName, {
+      logo_path: '',
+      custom_head_code: '',
+      theme_customizations: {},
+    });
+
     const item: ProjectItem = {
       id: pid,
       name: cleanName,
@@ -518,12 +662,15 @@ export class DashboardStore {
       platform,
       cf_project_name: cfProj,
       cf_custom_domain: cfCustomDomain,
+      cf_deployment_type: 'workers_assets',
+      cf_compatibility_date: '2024-11-01',
       gh_owner: ghOwner,
       gh_repo: ghRepo,
       gh_branch: ghBranch,
       gh_is_org: ghIsOrg,
       gh_base_path: '',
       sitemap_url: sitemapUrl,
+      wp_api_url: '',
       theme,
       routing_mode: routingMode,
       manifest_path: path.relative(this.workspaceDir, manifestFile),
@@ -531,6 +678,8 @@ export class DashboardStore {
       max_posts: 60,
       download_images: true,
       custom_head_code: '',
+      theme_customizations: {},
+      branding: freshBranding,
     };
 
     this.projects[pid] = item;
@@ -539,19 +688,11 @@ export class DashboardStore {
     this.activeManifestPath = manifestFile;
     this.manifest = emptyManifest;
     this.config.active_project = pid;
-    this.config.cloudflare.project_name = cfProj;
-    if (cfCustomDomain) this.config.cloudflare.custom_domain = cfCustomDomain;
-    if (ghOwner) this.config.github.owner = ghOwner;
-    if (ghRepo) this.config.github.repo = ghRepo;
-    this.config.ingestion.sitemap_url = sitemapUrl;
-    this.config.build.theme = theme;
-    this.config.build.routing_mode = routingMode;
-    this.config.branding.custom_head_code = '';
-    this.config.branding.theme_customizations = {};
+    this.hydrateConfigFromProject(item);
     this.staticPageOverrides = {};
 
     this.saveConfig();
-    this.log(`Created isolated project '${cleanName}' (id=${pid}) with empty catalog.`);
+    this.log(`Created isolated project '${cleanName}' (id=${pid}) with clean settings and empty catalog.`);
 
     return {
       success: true,
@@ -559,7 +700,7 @@ export class DashboardStore {
       active_project: pid,
       total_posts: 0,
       categories_count: 0,
-      message: `Project '${cleanName}' created successfully with empty categories.`,
+      message: `Project '${cleanName}' created successfully with isolated settings and empty categories.`,
     };
   }
 
@@ -591,45 +732,67 @@ export class DashboardStore {
     if (typeof updates.platform === 'string' && updates.platform.trim()) item.platform = updates.platform.trim();
     if (typeof updates.cf_project_name === 'string') item.cf_project_name = updates.cf_project_name.trim();
     if (typeof updates.cf_custom_domain === 'string') item.cf_custom_domain = stripProtocol(updates.cf_custom_domain);
+    if (typeof updates.cf_deployment_type === 'string' && updates.cf_deployment_type.trim()) {
+      item.cf_deployment_type = updates.cf_deployment_type.trim();
+    }
+    if (typeof updates.cf_compatibility_date === 'string' && updates.cf_compatibility_date.trim()) {
+      item.cf_compatibility_date = updates.cf_compatibility_date.trim();
+    }
     if (typeof updates.gh_owner === 'string') item.gh_owner = updates.gh_owner.trim();
     if (typeof updates.gh_repo === 'string') item.gh_repo = updates.gh_repo.trim();
     if (typeof updates.gh_branch === 'string' && updates.gh_branch.trim()) item.gh_branch = updates.gh_branch.trim();
     if (typeof updates.gh_is_org === 'boolean') item.gh_is_org = updates.gh_is_org;
+    if (typeof updates.gh_base_path === 'string') item.gh_base_path = updates.gh_base_path.trim();
     if (typeof updates.sitemap_url === 'string') item.sitemap_url = updates.sitemap_url.trim();
+    if (typeof updates.wp_api_url === 'string') item.wp_api_url = updates.wp_api_url.trim();
     if (typeof updates.theme === 'string' && updates.theme.trim()) item.theme = updates.theme.trim();
     if (typeof updates.routing_mode === 'string' && updates.routing_mode.trim()) {
       item.routing_mode = normalizeRoutingMode(updates.routing_mode);
     }
+    if (typeof updates.output_dir === 'string' && updates.output_dir.trim()) {
+      item.output_dir = updates.output_dir.trim();
+    }
     if (updates.max_posts !== undefined && updates.max_posts !== null) {
-      item.max_posts = Number(updates.max_posts) || 60;
+      const parsedMax = Number(updates.max_posts);
+      item.max_posts = Number.isFinite(parsedMax) ? Math.max(0, parsedMax) : 60;
     }
     if (updates.download_images !== undefined && updates.download_images !== null) {
       item.download_images = Boolean(updates.download_images);
     }
 
+    const existingBranding = createProjectBranding(
+      deriveBrandFromDomain(item.cf_custom_domain || '', item.name || pid),
+      item.branding || (pid === this.activeProjectId ? this.config.branding : undefined)
+    );
+    if (updates.branding && typeof updates.branding === 'object') {
+      const b = updates.branding as Partial<BrandingConfig>;
+      Object.assign(existingBranding, createProjectBranding(existingBranding.brand_name, { ...existingBranding, ...b }));
+    }
+    if (typeof updates.custom_head_code === 'string') {
+      existingBranding.custom_head_code = updates.custom_head_code.trim().slice(0, 50000);
+    }
+    if (updates.theme_customizations !== undefined) {
+      existingBranding.theme_customizations = normalizeThemeCustomizations(updates.theme_customizations);
+    }
+    if (updates.social_links && typeof updates.social_links === 'object') {
+      for (const [k, v] of Object.entries(updates.social_links as Record<string, unknown>)) {
+        if (v !== null && v !== undefined) {
+          existingBranding.social_links[k] = String(v).trim();
+        }
+      }
+    }
+    if (item.cf_custom_domain) {
+      const currentBrand = (existingBranding.brand_name || '').trim();
+      if (!currentBrand || currentBrand.toLowerCase() === pid.toLowerCase()) {
+        existingBranding.brand_name = deriveBrandFromDomain(item.cf_custom_domain, pid);
+      }
+    }
+    item.branding = existingBranding;
+    item.custom_head_code = existingBranding.custom_head_code || '';
+    item.theme_customizations = normalizeThemeCustomizations(existingBranding.theme_customizations);
+
     if (pid === this.activeProjectId) {
-      if (item.theme) this.config.build.theme = item.theme;
-      if (item.routing_mode) this.config.build.routing_mode = item.routing_mode;
-      if (item.cf_project_name) this.config.cloudflare.project_name = item.cf_project_name;
-      this.config.cloudflare.custom_domain = item.cf_custom_domain;
-      if (item.cf_custom_domain) {
-        const currentBrand = (this.config.branding.brand_name || '').trim();
-        if (!currentBrand || currentBrand.toLowerCase() === pid.toLowerCase()) {
-          this.config.branding.brand_name = deriveBrandFromDomain(item.cf_custom_domain, pid);
-        }
-      }
-      if (item.gh_owner) this.config.github.owner = item.gh_owner;
-      if (item.gh_repo) this.config.github.repo = item.gh_repo;
-      if (item.sitemap_url) this.config.ingestion.sitemap_url = item.sitemap_url;
-      this.config.ingestion.max_posts = item.max_posts;
-      this.config.ingestion.download_images = item.download_images;
-      if (updates.social_links && typeof updates.social_links === 'object') {
-        for (const [k, v] of Object.entries(updates.social_links as Record<string, unknown>)) {
-          if (v !== null && v !== undefined) {
-            this.config.branding.social_links[k] = String(v).trim();
-          }
-        }
-      }
+      this.hydrateConfigFromProject(item);
     }
 
     this.config.projects[pid] = item;
@@ -645,23 +808,18 @@ export class DashboardStore {
       throw new Error(`Project '${pid}' does not exist.`);
     }
 
+    // Snapshot outgoing project's full config before switching away
+    if (this.activeProjectId && this.activeProjectId !== pid) {
+      this.snapshotActiveProjectFromConfig();
+    }
+
     const mpath = this.resolveManifestPath(pid);
     this.manifest = this.loadManifestFile(mpath);
     this.activeManifestPath = mpath;
     this.activeProjectId = pid;
     this.config.active_project = pid;
 
-    if (item.theme) this.config.build.theme = item.theme;
-    if (item.routing_mode) this.config.build.routing_mode = item.routing_mode;
-    this.config.cloudflare.project_name = item.cf_project_name || item.id;
-    this.config.cloudflare.custom_domain = item.cf_custom_domain || '';
-    if (item.gh_owner) this.config.github.owner = item.gh_owner;
-    if (item.gh_repo) this.config.github.repo = item.gh_repo;
-    this.config.ingestion.sitemap_url = item.sitemap_url || '';
-    if (typeof item.custom_head_code === 'string') {
-      this.config.branding.custom_head_code = item.custom_head_code;
-    }
-    this.config.branding.theme_customizations = normalizeThemeCustomizations(item.theme_customizations);
+    this.hydrateConfigFromProject(item);
     this.staticPageOverrides = this.loadStaticPageOverrides(pid);
 
     this.saveConfig();
@@ -724,7 +882,11 @@ export class DashboardStore {
     }
     for (const [otherId, otherProj] of Object.entries(this.projects)) {
       if (otherId === pid) continue;
-      for (const blk of otherProj?.theme_customizations?.content_blocks || []) {
+      const otherLogo = String(otherProj?.branding?.logo_path || '').trim();
+      if (otherLogo && otherLogo.startsWith('/assets/images/')) {
+        protectedFilenames.add(path.basename(otherLogo));
+      }
+      for (const blk of otherProj?.branding?.theme_customizations?.content_blocks || otherProj?.theme_customizations?.content_blocks || []) {
         if (blk.image_url && blk.image_url.startsWith('/assets/images/')) {
           protectedFilenames.add(path.basename(blk.image_url));
         }
@@ -996,26 +1158,7 @@ export class DashboardStore {
       }
     }
 
-    const active = this.projects[this.activeProjectId];
-    if (active) {
-      active.theme = this.config.build.theme;
-      active.routing_mode = this.config.build.routing_mode;
-      if (cf.project_name !== undefined) active.cf_project_name = this.config.cloudflare.project_name;
-      if (cf.custom_domain !== undefined) active.cf_custom_domain = this.config.cloudflare.custom_domain;
-      if (gh.owner !== undefined || data.github_org !== undefined) active.gh_owner = this.config.github.owner;
-      if (gh.repo !== undefined || data.github_repo !== undefined) active.gh_repo = this.config.github.repo;
-      if (ing.sitemap_url !== undefined || data.sitemap_url !== undefined) {
-        active.sitemap_url = this.config.ingestion.sitemap_url;
-      }
-      if (typeof br.custom_head_code === 'string' || typeof data.custom_head_code === 'string') {
-        active.custom_head_code = this.config.branding.custom_head_code || '';
-      }
-      if (rawThemeCustom !== undefined) {
-        active.theme_customizations = this.config.branding.theme_customizations;
-      }
-      this.config.projects[this.activeProjectId] = active;
-    }
-
+    this.snapshotActiveProjectFromConfig();
     this.saveConfig();
     return this.getConfigMasked();
   }
@@ -1917,15 +2060,35 @@ export class DashboardStore {
     const assetsDir = path.join(this.workspaceDir, 'assets', 'images');
     fs.mkdirSync(assetsDir, { recursive: true });
     const exts = ['.png', '.jpg', '.jpeg', '.webp', '.svg'];
+    const safePid = slugify(this.activeProjectId || 'default') || 'default';
+    const logoPrefix = `custom-logo-${safePid}`;
 
-    if (body.reset) {
+    const cleanupProjectLogos = () => {
       for (const ext of exts) {
-        const p = path.join(assetsDir, `custom-logo${ext}`);
+        const p = path.join(assetsDir, `${logoPrefix}${ext}`);
         if (fs.existsSync(p)) fs.unlinkSync(p);
       }
+      const prevPath = String(this.config.branding.logo_path || '').trim();
+      if (prevPath.startsWith('/assets/images/')) {
+        const prevBase = path.basename(prevPath);
+        const sharedByOther = Object.entries(this.projects).some(
+          ([otherId, otherProj]) =>
+            otherId !== this.activeProjectId &&
+            path.basename(String(otherProj?.branding?.logo_path || '')) === prevBase
+        );
+        if (!sharedByOther) {
+          const fullPrev = path.join(assetsDir, prevBase);
+          if (fs.existsSync(fullPrev)) fs.unlinkSync(fullPrev);
+        }
+      }
+    };
+
+    if (body.reset) {
+      cleanupProjectLogos();
       this.config.branding.logo_path = '';
+      this.snapshotActiveProjectFromConfig();
       this.saveConfig();
-      this.log('Reset custom logo to default vector emblem.');
+      this.log(`Reset custom logo for project '${this.activeProjectId}' to default vector emblem.`);
       return { success: true, reset: true, logo_url: '' };
     }
 
@@ -1966,16 +2129,15 @@ export class DashboardStore {
         .replace(/(?:href|xlink:href)\s*=\s*(?:"\s*javascript:[^"]*"|'\s*javascript:[^']*')/gi, '');
       bytes = Buffer.from(sanitizedSvg, 'utf-8');
     }
-    for (const prevExt of exts) {
-      const p = path.join(assetsDir, `custom-logo${prevExt}`);
-      if (fs.existsSync(p)) fs.unlinkSync(p);
-    }
-    const filename = `custom-logo${ext}`;
+
+    cleanupProjectLogos();
+    const filename = `${logoPrefix}${ext}`;
     fs.writeFileSync(path.join(assetsDir, filename), bytes);
     const relPath = `/assets/images/${filename}`;
     this.config.branding.logo_path = relPath;
+    this.snapshotActiveProjectFromConfig();
     this.saveConfig();
-    this.log(`Custom logo saved: ${relPath} (${bytes.length} bytes).`);
+    this.log(`Custom logo saved for project '${this.activeProjectId}': ${relPath} (${bytes.length} bytes).`);
 
     return {
       success: true,

@@ -83,12 +83,15 @@ export interface ProjectItem {
   platform: string;
   cf_project_name: string;
   cf_custom_domain: string;
+  cf_deployment_type?: string;
+  cf_compatibility_date?: string;
   gh_owner: string;
   gh_repo: string;
   gh_branch: string;
   gh_is_org: boolean;
   gh_base_path: string;
   sitemap_url: string;
+  wp_api_url?: string;
   theme: string;
   routing_mode: string;
   manifest_path: string;
@@ -97,6 +100,7 @@ export interface ProjectItem {
   download_images: boolean;
   custom_head_code?: string;
   theme_customizations?: ThemeCustomizations;
+  branding?: BrandingConfig;
 }
 
 export interface AppConfig {
@@ -476,6 +480,43 @@ export function createDefaultConfig(): AppConfig {
     },
     active_project: 'stylesdays',
     projects: {},
+  };
+}
+
+export function createProjectBranding(
+  brandName = 'Atelier Maison',
+  partial?: Partial<BrandingConfig> | null
+): BrandingConfig {
+  const src = partial && typeof partial === 'object' ? partial : {};
+  const rawSocial = src.social_links && typeof src.social_links === 'object' ? src.social_links : {};
+  return {
+    brand_name: typeof src.brand_name === 'string' && src.brand_name.trim() ? src.brand_name.trim() : brandName,
+    tagline:
+      typeof src.tagline === 'string' && src.tagline.trim()
+        ? src.tagline.trim()
+        : 'Interior Design & Curated Living',
+    logo_path: typeof src.logo_path === 'string' ? src.logo_path.trim() : '',
+    author_name:
+      typeof src.author_name === 'string' && src.author_name.trim()
+        ? src.author_name.trim()
+        : 'Editorial Team',
+    author_bio:
+      typeof src.author_bio === 'string' && src.author_bio.trim()
+        ? src.author_bio.trim()
+        : 'Interior Design Specialist & Home Architecture Curator',
+    enable_toc: src.enable_toc !== false,
+    enable_faq: src.enable_faq !== false,
+    enable_eeat: src.enable_eeat !== false,
+    social_links: {
+      pinterest: String(rawSocial.pinterest || '').trim(),
+      facebook: String(rawSocial.facebook || '').trim(),
+      instagram: String(rawSocial.instagram || '').trim(),
+      twitter: String(rawSocial.twitter || '').trim(),
+      tiktok: String(rawSocial.tiktok || '').trim(),
+      youtube: String(rawSocial.youtube || '').trim(),
+    },
+    custom_head_code: typeof src.custom_head_code === 'string' ? src.custom_head_code.trim().slice(0, 50000) : '',
+    theme_customizations: normalizeThemeCustomizations(src.theme_customizations),
   };
 }
 

@@ -1189,7 +1189,8 @@ test('security & stability audit: blocks IPv4-mapped IPv6 & private worker URLs,
       data: `data:image/svg+xml;base64,${Buffer.from(maliciousSvg).toString('base64')}`,
     });
     assert.equal(svgRes.success, true);
-    const savedSvg = fs.readFileSync(path.join(tmpDir, 'assets', 'images', 'custom-logo.svg'), 'utf-8');
+    const savedSvgPath = path.join(tmpDir, String(svgRes.logo_url || '').replace(/^\/+/, ''));
+    const savedSvg = fs.readFileSync(savedSvgPath, 'utf-8');
     assert.equal(/<script/i.test(savedSvg), false);
     assert.equal(/onload=/i.test(savedSvg), false);
     assert.match(savedSvg, /<rect/);
@@ -1770,6 +1771,201 @@ test('Theme Preview Live Customizer: titles, Image+Text blocks, footer text, ima
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
+
+test('Complete per-project settings isolation: theme, project-scoped logos, branding, social links, toggles, head code, theme customizations, ingestion, CF/GH settings survive switching and disk reload', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pseo-full-project-isolation-'));
+  const tinyPngA =
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X2dIAAAAASUVORK5CYII=';
+  const tinySvgB =
+    'data:image/svg+xml;base64,' +
+    Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><circle cx="16" cy="16" r="14" fill="#1B4D3E"/></svg>').toString('base64');
+
+  try {
+    const store = new DashboardStore({ workspaceDir: tmpDir });
+    const projA = store.config.active_project;
+
+    // Configure Project A with distinct settings across EVERY section
+    store.updateConfig({
+      build: { theme: 'pinterest-mag', routing_mode: 'category_slug', output_dir: 'dist/alpha' },
+      cloudflare: {
+        api_token: 'cf_shared_token_1234',
+        account_id: 'acct_shared_99',
+        project_name: 'alpha-worker',
+        custom_domain: 'alpha-home.example',
+        deployment_type: 'workers_assets',
+      },
+      github: {
+        token: 'ghp_shared_token_5678',
+        owner: 'alpha-org',
+        repo: 'alpha-site',
+        branch: 'main',
+        base_path: '/alpha',
+      },
+      ingestion: {
+        sitemap_url: 'https://alpha-source.example/sitemap.xml',
+        wp_api_url: 'alpha-source.example',
+        max_posts: 25,
+        download_images: true,
+      },
+      branding: {
+        brand_name: 'Alpha Botanical',
+        tagline: 'Forest & Brass Living',
+        author_name: 'Elena Alpha',
+        author_bio: 'Lead Architect at Alpha',
+        enable_toc: true,
+        enable_faq: false,
+        enable_eeat: true,
+        social_links: {
+          pinterest: 'https://pinterest.com/alpha',
+          instagram: 'https://instagram.com/alpha',
+        },
+        custom_head_code: '<meta name="verify-alpha" content="AAA" />',
+        theme_customizations: {
+          hero_title: 'Alpha Custom Hero',
+          footer_copyright: '© 2026 Alpha Botanical',
+        },
+      },
+    });
+    const logoA = store.uploadLogo({ data: tinyPngA });
+    assert.equal(logoA.success, true);
+    const logoPathA = String(logoA.logo_url || '');
+    assert.match(logoPathA, /^\/assets\/images\/custom-logo-.*\.png$/);
+
+    // Create Project B -> must start completely clean (NO logo/branding/social/domain/head/customizations leaked from A!)
+    const createdB = store.createProject({
+      name: 'Beta Nordic',
+      platform: 'github',
+      cf_project_name: 'beta-worker',
+      cf_custom_domain: 'beta-nordic.example',
+      gh_owner: 'beta-org',
+      gh_repo: 'beta-org.github.io',
+      sitemap_url: 'https://beta-source.example/sitemap.xml',
+      theme: 'editorial-warm',
+      routing_mode: 'silo_nested',
+    });
+    const projB = String(createdB.active_project);
+
+    assert.equal(store.config.branding.logo_path, '');
+    assert.equal(store.config.branding.brand_name, 'Beta Nordic');
+    assert.equal(store.config.branding.social_links.pinterest, '');
+    assert.equal(store.config.branding.custom_head_code, '');
+    assert.equal(store.config.branding.theme_customizations?.hero_title, undefined);
+    assert.equal(store.config.build.theme, 'editorial-warm');
+    assert.equal(store.config.build.routing_mode, 'silo_nested');
+    // Shared API credentials remain available across projects
+    assert.equal(store.config.cloudflare.api_token, 'cf_shared_token_1234');
+    assert.equal(store.config.github.token, 'ghp_shared_token_5678');
+
+    // Configure Project B with its OWN distinct logo & settings
+    store.updateConfig({
+      ingestion: {
+        wp_api_url: 'beta-source.example',
+        max_posts: 40,
+        download_images: false,
+      },
+      github: {
+        branch: 'gh-pages',
+        base_path: '/beta',
+      },
+      branding: {
+        brand_name: 'Beta Studio Press',
+        tagline: 'Warm Editorial Minimalism',
+        author_name: 'Soren Beta',
+        author_bio: 'Scandinavian Curator',
+        enable_toc: false,
+        enable_faq: true,
+        enable_eeat: false,
+        social_links: {
+          pinterest: 'https://pinterest.com/beta',
+          youtube: 'https://youtube.com/@beta',
+        },
+        custom_head_code: '<meta name="verify-beta" content="BBB" />',
+        theme_customizations: {
+          hero_title: 'Beta Editorial Hero',
+          footer_copyright: '© 2026 Beta Studio Press',
+        },
+      },
+    });
+    const logoB = store.uploadLogo({ data: tinySvgB });
+    assert.equal(logoB.success, true);
+    const logoPathB = String(logoB.logo_url || '');
+    assert.match(logoPathB, /^\/assets\/images\/custom-logo-beta-nordic\.svg$/);
+    assert.notEqual(logoPathA, logoPathB);
+    // Project A's logo file on disk MUST STILL EXIST untouched!
+    assert.equal(fs.existsSync(path.join(tmpDir, logoPathA.replace(/^\/+/, ''))), true);
+    assert.equal(fs.existsSync(path.join(tmpDir, logoPathB.replace(/^\/+/, ''))), true);
+
+    // Switch back to Project A -> ALL Project A settings & logo return cleanly
+    store.switchProject(projA);
+    assert.equal(store.config.build.theme, 'pinterest-mag');
+    assert.equal(store.config.build.routing_mode, 'category_slug');
+    assert.equal(store.config.branding.logo_path, logoPathA);
+    assert.equal(store.config.branding.brand_name, 'Alpha Botanical');
+    assert.equal(store.config.branding.tagline, 'Forest & Brass Living');
+    assert.equal(store.config.branding.author_name, 'Elena Alpha');
+    assert.equal(store.config.branding.enable_toc, true);
+    assert.equal(store.config.branding.enable_faq, false);
+    assert.equal(store.config.branding.enable_eeat, true);
+    assert.equal(store.config.branding.social_links.pinterest, 'https://pinterest.com/alpha');
+    assert.equal(store.config.branding.social_links.youtube, '');
+    assert.equal(store.config.branding.custom_head_code, '<meta name="verify-alpha" content="AAA" />');
+    assert.equal(store.config.branding.theme_customizations?.hero_title, 'Alpha Custom Hero');
+    assert.equal(store.config.ingestion.sitemap_url, 'https://alpha-source.example/sitemap.xml');
+    assert.equal(store.config.ingestion.wp_api_url, 'alpha-source.example');
+    assert.equal(store.config.ingestion.max_posts, 25);
+    assert.equal(store.config.ingestion.download_images, true);
+    assert.equal(store.config.cloudflare.project_name, 'alpha-worker');
+    assert.equal(store.config.cloudflare.custom_domain, 'alpha-home.example');
+    assert.equal(store.config.github.owner, 'alpha-org');
+    assert.equal(store.config.github.repo, 'alpha-site');
+    assert.equal(store.config.github.branch, 'main');
+    assert.equal(store.config.github.base_path, '/alpha');
+
+    // Switch back to Project B -> ALL Project B settings & logo return cleanly
+    store.switchProject(projB);
+    assert.equal(store.config.build.theme, 'editorial-warm');
+    assert.equal(store.config.build.routing_mode, 'silo_nested');
+    assert.equal(store.config.branding.logo_path, logoPathB);
+    assert.equal(store.config.branding.brand_name, 'Beta Studio Press');
+    assert.equal(store.config.branding.tagline, 'Warm Editorial Minimalism');
+    assert.equal(store.config.branding.author_name, 'Soren Beta');
+    assert.equal(store.config.branding.enable_toc, false);
+    assert.equal(store.config.branding.enable_faq, true);
+    assert.equal(store.config.branding.enable_eeat, false);
+    assert.equal(store.config.branding.social_links.pinterest, 'https://pinterest.com/beta');
+    assert.equal(store.config.branding.social_links.instagram, '');
+    assert.equal(store.config.branding.social_links.youtube, 'https://youtube.com/@beta');
+    assert.equal(store.config.branding.custom_head_code, '<meta name="verify-beta" content="BBB" />');
+    assert.equal(store.config.branding.theme_customizations?.hero_title, 'Beta Editorial Hero');
+    assert.equal(store.config.ingestion.sitemap_url, 'https://beta-source.example/sitemap.xml');
+    assert.equal(store.config.ingestion.wp_api_url, 'beta-source.example');
+    assert.equal(store.config.ingestion.max_posts, 40);
+    assert.equal(store.config.ingestion.download_images, false);
+    assert.equal(store.config.github.owner, 'beta-org');
+    assert.equal(store.config.github.repo, 'beta-org.github.io');
+    assert.equal(store.config.github.branch, 'gh-pages');
+    assert.equal(store.config.github.base_path, '/beta');
+
+    // Clearing Project B's catalog MUST NOT delete Project A's logo on disk
+    store.clearActiveProjectData(projB);
+    assert.equal(fs.existsSync(path.join(tmpDir, logoPathA.replace(/^\/+/, ''))), true);
+
+    // Reload a fresh DashboardStore from disk -> BOTH projects retain 100% separated settings
+    const reloaded = new DashboardStore({ workspaceDir: tmpDir });
+    assert.equal(reloaded.config.active_project, projB);
+    assert.equal(reloaded.config.branding.logo_path, logoPathB);
+    assert.equal(reloaded.config.branding.brand_name, 'Beta Studio Press');
+    assert.equal(reloaded.config.build.theme, 'editorial-warm');
+
+    reloaded.switchProject(projA);
+    assert.equal(reloaded.config.branding.logo_path, logoPathA);
+    assert.equal(reloaded.config.branding.brand_name, 'Alpha Botanical');
+    assert.equal(reloaded.config.build.theme, 'pinterest-mag');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 
 
 

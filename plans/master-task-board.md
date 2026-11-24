@@ -59,6 +59,17 @@
 | `public/index.html`, `public/style.css`, `public/app.js` | Split-pane collapsible Customize sidebar inside `#templatePreviewModal` (`Titles`, `Image & Text`, `Footer`), live debounced preview, image upload, reorder/delete, Reset Edits, Save & Apply | Verified (`node --check` + live Chromium E2E) |
 | `src/store.test.ts` | Added Test #19 covering normalization, Image+Text upload/build sync, draft preview, all 3 themes, and per-project isolation | 19/19 passing |
 
+## Complete Per-Project Settings & Logo Isolation Log
+
+| File Path | Key Exports / Changes | Verification Status |
+|---|---|---|
+| `plans/architecture-spec.md` | Section 7 blueprint for complete per-project settings & logo asset isolation | Approved |
+| `src/types.ts` | Extended `ProjectItem` with full `branding: BrandingConfig`, `wp_api_url`, `cf_deployment_type`, `cf_compatibility_date`; exported `createProjectBranding()` | Verified (`tsc --noEmit` + 20/20 tests) |
+| `src/store.ts` | Added `snapshotActiveProjectFromConfig()` & `hydrateConfigFromProject()`, project-scoped logo filenames (`custom-logo-<pid>.<ext>`), legacy project backfill in `initProjects()`, sibling logo protection in `clearActiveProjectData()` | Verified (20/20 tests) |
+| `public/app.js` | Fixed `gh_owner`/`gh_repo` field mapping, persisted platform per project, full UI/logo/branding/theme/routing/Site Pages/preview reload on `switchProject()` & `handleCreateNewProject()` | Verified (`node --check` + live Chromium E2E) |
+| `src/store.test.ts` | Added Test #20 verifying complete per-project isolation across create, edit, project-scoped logos, switch, clear, and disk reload | 20/20 passing |
+
+
 
 
 

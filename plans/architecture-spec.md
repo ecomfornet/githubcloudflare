@@ -44,5 +44,14 @@
   - `POST /api/upload-block-image` validates and saves uploaded block images (converting raster uploads to WebP via `sharp` or sanitizing SVG) into `/assets/images/` and returns `{ success: true, image_url }`.
 - **UI (`public/index.html`, `public/style.css`, `public/app.js`)**: Side-by-side collapsible editor drawer inside `#templatePreviewModal` with 3 tabs (**Titles**, **Image & Text**, **Footer**), live debounced iframe re-rendering, image file upload + URL input, reorder/delete block controls, **Reset Edits**, and **Save & Apply** persistence.
 
+## 7. Complete Per-Project Settings & Asset Isolation
+- **Data Model (`src/types.ts`)**: Extend `ProjectItem` to persist EVERY project-specific configuration field: full `branding: BrandingConfig` (`brand_name`, `tagline`, `logo_path`, `author_name`, `author_bio`, `enable_toc`, `enable_faq`, `enable_eeat`, `social_links`, `custom_head_code`, `theme_customizations`), `theme`, `routing_mode`, `output_dir`, `platform`, `cf_project_name`, `cf_custom_domain`, `cf_deployment_type`, `cf_compatibility_date`, `gh_owner`, `gh_repo`, `gh_branch`, `gh_is_org`, `gh_base_path`, `sitemap_url`, `wp_api_url`, `max_posts`, and `download_images`. Account-level API credentials (`cloudflare.api_token`, `cloudflare.account_id`, `cloudflare.account_subdomain`, `github.token`) remain shared across projects so users don't re-enter tokens when switching projects.
+- **Project-Scoped Logo Assets (`src/store.ts`)**: `uploadLogo()` writes to `/assets/images/custom-logo-<projectId>.<ext>` (never overwriting another project's logo) and deletes only the active project's logo on replace/reset; `clearActiveProjectData()` protects all sibling projects' logos and theme block images.
+- **Bidirectional Snapshot/Hydration (`src/store.ts`)**:
+  - `snapshotActiveProjectFromConfig()` snapshots all active project-scoped config fields onto `projects[activeProjectId]` on every `updateConfig()`, `uploadLogo()`, `updateProject()`, and prior to switching away in `switchProject()` / `createProject()`.
+  - `hydrateConfigFromProject(item)` restores all project-scoped fields cleanly into `this.config` on `initProjects()`, `createProject()`, and `switchProject()` (zero leakage from previous projects).
+- **Frontend Sync (`public/app.js`)**: On project switch or creation, immediately synchronize platform view (`cf`/`gh`), all Step 1–4 inputs (fixing `gh_owner`/`gh_repo` field mapping), logo preview (`updateLogoPreview`), theme cards, routing cards, custom `<head>` code, Theme Customizer draft, posts catalog, Site Pages (9) (`refreshStaticPages`), and live preview iframe (`triggerPreview`).
+
+
 
 

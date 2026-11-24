@@ -527,6 +527,9 @@
 
   function populateActiveProjectFields(proj) {
     if (!proj) return;
+    if (proj.platform === 'github' || proj.platform === 'cloudflare') {
+      setActivePlatformView(proj.platform === 'github' ? 'gh' : 'cf');
+    }
     if (DOM.ingestSitemapUrl) {
       DOM.ingestSitemapUrl.value = proj.sitemap_url || '';
     }
@@ -539,18 +542,26 @@
     if (DOM.cfgCfProjectName) {
       DOM.cfgCfProjectName.value = proj.cf_project_name || proj.id || '';
     }
-    if (DOM.cfgCfCustomDomain && proj.cf_custom_domain !== undefined) {
-      DOM.cfgCfCustomDomain.value = proj.cf_custom_domain;
+    if (DOM.cfgCfCustomDomain) {
+      DOM.cfgCfCustomDomain.value = proj.cf_custom_domain || '';
     }
-    if (DOM.cfgStep1GithubOwner && proj.github_owner !== undefined) {
-      DOM.cfgStep1GithubOwner.value = proj.github_owner;
+    const ghOwnerVal = proj.gh_owner !== undefined ? proj.gh_owner : (proj.github_owner || '');
+    const ghRepoVal = proj.gh_repo !== undefined ? proj.gh_repo : (proj.github_repo || '');
+    if (DOM.cfgStep1GithubOwner) {
+      DOM.cfgStep1GithubOwner.value = ghOwnerVal;
     }
-    if (DOM.cfgStep1GithubRepo && proj.github_repo !== undefined) {
-      DOM.cfgStep1GithubRepo.value = proj.github_repo;
+    if (DOM.cfgStep1GithubRepo) {
+      DOM.cfgStep1GithubRepo.value = ghRepoVal;
     }
     if (DOM.scanResultBanner) {
       DOM.scanResultBanner.style.display = 'none';
     }
+    if (DOM.diffSummaryTableBody) {
+      DOM.diffSummaryTableBody.innerHTML = '';
+    }
+    if (DOM.diffNewCount) DOM.diffNewCount.textContent = '0';
+    if (DOM.diffUpdatedCount) DOM.diffUpdatedCount.textContent = '0';
+    if (DOM.diffSyncedCount) DOM.diffSyncedCount.textContent = '0';
     updateCloudflareLiveUrlPreview();
     updateRootDomainPreview();
   }
@@ -647,16 +658,21 @@
       appendTerminalLog(`[PROJECT] Switching active project to '${projectId}'...`, 'info');
       const res = await api('/api/projects/switch', 'POST', { project_id: projectId });
       state.activeProject = res.active_project || projectId;
+      state.selectedPostSlug = null;
+      state.allCategories = [];
+      state.allCategoriesProject = null;
       if (res.project) {
         populateActiveProjectFields(res.project);
       }
       showToast(res.message || `Switched to project ${projectId}`, 'success');
       appendTerminalLog(`[PROJECT] Active project is now '${state.activeProject}' (${res.total_posts} posts, ${res.categories_count} categories).`, 'success');
 
-      // Refresh status, config, posts, and category filter
+      // Refresh status, full per-project config, posts, Site Pages, projects list, and live preview
+      await loadProjects();
       await refreshSystem();
       await refreshPosts();
-      await loadProjects();
+      await refreshStaticPages();
+      triggerPreview();
     } catch (err) {
       showToast(`Failed switching project: ${err.message}`, 'error');
       appendTerminalLog(`[PROJECT ERROR] ${err.message}`, 'error');
@@ -718,16 +734,24 @@
 
       // Update active state
       state.activeProject = res.active_project || name.toLowerCase();
+      state.selectedPostSlug = null;
+      state.allCategories = [];
+      state.allCategoriesProject = null;
+      if (res.project) {
+        populateActiveProjectFields(res.project);
+      }
 
       // Clear posts and categories immediately
       state.posts = [];
       populateCategoryFilter();
       renderPostsTable();
 
-      // Refresh all systems
+      // Refresh all systems with the new project's isolated settings
+      await loadProjects();
       await refreshSystem();
       await refreshPosts();
-      await loadProjects();
+      await refreshStaticPages();
+      triggerPreview();
     } catch (err) {
       showToast(`Error creating project: ${err.message}`, 'error');
       appendTerminalLog(`[PROJECT ERROR] ${err.message}`, 'error');
@@ -824,9 +848,22 @@
 
   function initPlatformDivision() {
     if (DOM.selectedPlatformBadge) {
-      DOM.selectedPlatformBadge.addEventListener('click', () => {
+      DOM.selectedPlatformBadge.addEventListener('click', async () => {
         const nextMode = currentPlatformMode === 'cloudflare' ? 'gh' : 'cf';
         setActivePlatformView(nextMode);
+        if (state.activeProject) {
+          const nextPlatform = nextMode === 'gh' ? 'github' : 'cloudflare';
+          try {
+            await api('/api/projects/update', 'POST', {
+              project_id: state.activeProject,
+              platform: nextPlatform,
+            });
+            const cur = state.projects && state.projects.find((p) => p.id === state.activeProject);
+            if (cur) cur.platform = nextPlatform;
+          } catch (err) {
+            console.warn('Could not persist active platform for project:', err);
+          }
+        }
       });
     }
 
@@ -968,26 +1005,34 @@
       }
 
       const activeProj =
+        (cfg.projects && cfg.projects[cfg.active_project || state.activeProject]) ||
         (state.projects && state.projects.find((p) => p.id === state.activeProject)) ||
-        (cfg.projects && cfg.projects[state.activeProject]) ||
         {};
+      if (cfg.active_project) {
+        state.activeProject = cfg.active_project;
+      }
+      if (activeProj.platform === 'github' || activeProj.platform === 'cloudflare') {
+        setActivePlatformView(activeProj.platform === 'github' ? 'gh' : 'cf');
+      }
       if (DOM.cfgCfAccountId) DOM.cfgCfAccountId.value = cf.account_id || '';
       if (DOM.cfgCfAccountSubdomain) DOM.cfgCfAccountSubdomain.value = cf.account_subdomain || '';
-      if (DOM.cfgCfProjectName) DOM.cfgCfProjectName.value = activeProj.cf_project_name || activeProj.id || cf.project_name || state.activeProject || 'stylesdays';
-      if (DOM.cfgCfDeployType) DOM.cfgCfDeployType.value = cf.deployment_type || 'workers_assets';
+      if (DOM.cfgCfProjectName) DOM.cfgCfProjectName.value = activeProj.cf_project_name || cf.project_name || activeProj.id || state.activeProject || 'stylesdays';
+      if (DOM.cfgCfDeployType) DOM.cfgCfDeployType.value = activeProj.cf_deployment_type || cf.deployment_type || 'workers_assets';
       if (DOM.cfgCfCustomDomain) DOM.cfgCfCustomDomain.value = activeProj.cf_custom_domain !== undefined ? activeProj.cf_custom_domain : (cf.custom_domain || '');
-      if (DOM.cfgCfCompatibilityDate) DOM.cfgCfCompatibilityDate.value = cf.compatibility_date || '2024-11-01';
+      if (DOM.cfgCfCompatibilityDate) DOM.cfgCfCompatibilityDate.value = activeProj.cf_compatibility_date || cf.compatibility_date || '2024-11-01';
       updateCloudflareLiveUrlPreview();
 
       // Populate GitHub Settings Inputs
       const gh = cfg.github || {};
       DOM.cfgGithubToken.placeholder = gh.token_masked || 'ghp_xxxxxxxxxxxxxxxxxxxx';
-      if (DOM.cfgStep1GithubOwner) DOM.cfgStep1GithubOwner.value = activeProj.github_owner !== undefined ? activeProj.github_owner : (gh.owner || '');
-      if (DOM.cfgStep1GithubRepo) DOM.cfgStep1GithubRepo.value = activeProj.github_repo !== undefined ? activeProj.github_repo : (gh.repo || '');
-      DOM.cfgGithubBranch.value = gh.branch || 'main';
-      DOM.cfgGithubBasePath.value = gh.base_path || '';
+      const projGhOwner = activeProj.gh_owner !== undefined ? activeProj.gh_owner : (activeProj.github_owner !== undefined ? activeProj.github_owner : (gh.owner || ''));
+      const projGhRepo = activeProj.gh_repo !== undefined ? activeProj.gh_repo : (activeProj.github_repo !== undefined ? activeProj.github_repo : (gh.repo || ''));
+      if (DOM.cfgStep1GithubOwner) DOM.cfgStep1GithubOwner.value = projGhOwner;
+      if (DOM.cfgStep1GithubRepo) DOM.cfgStep1GithubRepo.value = projGhRepo;
+      DOM.cfgGithubBranch.value = activeProj.gh_branch || gh.branch || 'main';
+      DOM.cfgGithubBasePath.value = activeProj.gh_base_path !== undefined ? activeProj.gh_base_path : (gh.base_path || '');
       if (DOM.cfgStep1AutoRootOrg) {
-        DOM.cfgStep1AutoRootOrg.checked = (gh.repo && gh.repo.endsWith('.github.io')) || (!gh.repo && gh.is_org);
+        DOM.cfgStep1AutoRootOrg.checked = (projGhRepo && projGhRepo.endsWith('.github.io')) || (!projGhRepo && gh.is_org);
       }
 
       if (currentPlatformMode === 'github' && DOM.statTargetUrl) {
@@ -997,8 +1042,8 @@
       }
       updateRootDomainPreview();
       const bld = cfg.build || {};
-      const authoritativeTheme = (status && status.theme) || (bld && bld.theme) || activeProj.theme || 'nordic-studio';
-      const authoritativeRouting = (status && status.routing_mode) || (bld && bld.routing_mode) || activeProj.routing_mode || 'single';
+      const authoritativeTheme = (bld && bld.theme) || activeProj.theme || (status && status.theme) || 'nordic-studio';
+      const authoritativeRouting = (bld && bld.routing_mode) || activeProj.routing_mode || (status && status.routing_mode) || 'single';
       syncThemeToUI(authoritativeTheme);
       DOM.cfgRoutingMode.value = authoritativeRouting;
       DOM.previewRoutingSelect.value = authoritativeRouting;
@@ -1013,9 +1058,9 @@
         }
       });
 
-      DOM.cfgOutputDir.value = bld.output_dir || 'dist_github_pages';
+      DOM.cfgOutputDir.value = activeProj.output_dir || bld.output_dir || 'dist_github_pages';
       const ing = cfg.ingestion || {};
-      DOM.cfgWpApiUrl.value = ing.wp_api_url || 'stylesdays.com';
+      DOM.cfgWpApiUrl.value = activeProj.wp_api_url !== undefined ? activeProj.wp_api_url : (ing.wp_api_url || '');
       DOM.ingestSitemapUrl.value =
         activeProj.sitemap_url !== undefined ? activeProj.sitemap_url : (ing.sitemap_url || '');
       DOM.ingestMaxPosts.value =
@@ -1024,12 +1069,12 @@
           : (ing.max_posts !== undefined ? ing.max_posts : 100);
       DOM.ingestDownloadImages.checked = activeProj.download_images !== undefined ? !!activeProj.download_images : (ing.download_images !== false);
 
-      // Populate Branding and pSEO settings
-      const branding = cfg.branding || status.branding || {};
-      if (DOM.cfgBrandName) DOM.cfgBrandName.value = branding.brand_name || 'Anna Deco';
+      // Populate Branding and pSEO settings (100% isolated per active project)
+      const branding = cfg.branding || activeProj.branding || status.branding || {};
+      if (DOM.cfgBrandName) DOM.cfgBrandName.value = branding.brand_name || activeProj.name || 'Atelier Maison';
       if (DOM.cfgBrandTagline) DOM.cfgBrandTagline.value = branding.tagline || 'Interior Design & Curated Living';
-      if (DOM.cfgAuthorName) DOM.cfgAuthorName.value = branding.author_name || 'Anna Lindqvist';
-      if (DOM.cfgAuthorBio) DOM.cfgAuthorBio.value = branding.author_bio || 'Senior Interior Architect & Kinfolk Stylist';
+      if (DOM.cfgAuthorName) DOM.cfgAuthorName.value = branding.author_name || 'Editorial Team';
+      if (DOM.cfgAuthorBio) DOM.cfgAuthorBio.value = branding.author_bio || 'Interior Design Specialist & Home Architecture Curator';
       if (DOM.cfgEnableToc) DOM.cfgEnableToc.checked = branding.enable_toc !== false;
       if (DOM.cfgEnableFaq) DOM.cfgEnableFaq.checked = branding.enable_faq !== false;
       if (DOM.cfgEnableEeat) DOM.cfgEnableEeat.checked = branding.enable_eeat !== false;
@@ -1041,14 +1086,14 @@
       if (DOM.cfgSocialTiktok) DOM.cfgSocialTiktok.value = socialLinks.tiktok || '';
       if (DOM.cfgSocialYoutube) DOM.cfgSocialYoutube.value = socialLinks.youtube || '';
       if (DOM.cfgCustomHeadCode) {
-        DOM.cfgCustomHeadCode.value = branding.custom_head_code || activeProj.custom_head_code || '';
+        DOM.cfgCustomHeadCode.value = branding.custom_head_code !== undefined ? branding.custom_head_code : (activeProj.custom_head_code || '');
         updateHeadCodeStats();
       }
-      updateLogoPreview(branding.logo_path, branding.brand_name);
+      updateLogoPreview(branding.logo_path || '', branding.brand_name || activeProj.name, branding.tagline);
 
       // Populate Preview Options
-      DOM.previewThemeSelect.value = bld.theme || 'nordic-studio';
-      DOM.previewRoutingSelect.value = bld.routing_mode || 'single';
+      DOM.previewThemeSelect.value = authoritativeTheme;
+      DOM.previewRoutingSelect.value = authoritativeRouting;
       await loadGithubAccounts();
       await refreshPosts();
       await syncActiveIngestJobUI();
