@@ -129,7 +129,8 @@ export function createApp() {
     const q = String(req.query.q || '');
     const category = String(req.query.category || '');
     const customOnly = String(req.query.custom_only || 'false').toLowerCase() === 'true' || req.query.custom_only === '1';
-    const posts = store.listPosts({ query: q, category, customOnly });
+    const status = String(req.query.status || '');
+    const posts = store.listPosts({ query: q, category, customOnly, status });
     res.json({ total: posts.length, posts });
   });
 

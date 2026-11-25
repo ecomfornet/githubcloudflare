@@ -252,6 +252,15 @@
                   🖼️ Sync Assets
                 </button>
               </div>
+              <div id="ghBuildProgressBarContainer" class="progress-wrapper" style="display: none; margin-top: 0.75rem;">
+                <div class="progress-header">
+                  <span id="ghBuildProgressLabel" class="progress-label">Compiling GitHub Pages bundle...</span>
+                  <span id="ghBuildProgressPercent" class="progress-pct">0%</span>
+                </div>
+                <div class="progress-track">
+                  <div id="ghBuildProgressBar" class="progress-fill gh-fill" style="width: 0%;"></div>
+                </div>
+              </div>
             </div>
 
             <!-- Right Column: Git Data API Production Deployment -->
@@ -694,7 +703,7 @@
             </div>
 
             <div id="groupSitemapUrl" class="form-group compact-group">
-              <label class="form-label" for="ingestSitemapUrl">Sitemap URL</label>
+              <label class="form-label" id="ingestUrlLabel" for="ingestSitemapUrl">Sitemap URL</label>
               <input type="url" id="ingestSitemapUrl" class="form-control" value="" placeholder="https://stylesdays.com/post-sitemap8.xml">
             </div>
 
@@ -929,7 +938,7 @@
             <button type="button" class="btn btn-secondary btn-sm" onclick="switchTab('tab-themes')">
               <span>← Back to Models</span>
             </button>
-            <button type="button" class="btn btn-primary btn-sm" onclick="switchTab('tab-deploy', 'cloudflare')">
+            <button type="button" class="btn btn-primary btn-sm" onclick="switchTab('tab-deploy')">
               <span>Proceed to Step 4: Deploy Cockpit →</span>
             </button>
           </div>
@@ -982,7 +991,7 @@
             <button type="button" class="btn btn-secondary btn-sm" onclick="switchTab('tab-themes')">
               <span>← Back to Models</span>
             </button>
-            <button type="button" class="btn btn-primary btn-sm" onclick="switchTab('tab-deploy', 'cloudflare')">
+            <button type="button" class="btn btn-primary btn-sm" onclick="switchTab('tab-deploy')">
               <span>Proceed to Step 4: Deploy Cockpit →</span>
             </button>
           </div>
@@ -1082,9 +1091,9 @@
           <div class="preview-toolbar" style="padding: 0.35rem 0.75rem;">
             <span style="font-size: 0.75rem; font-weight: 700; color: var(--text-primary);">Live Render</span>
             <div class="viewport-btns">
-              <button class="viewport-btn active" data-width="100%">Desktop</button>
-              <button class="viewport-btn" data-width="768px">Tablet</button>
-              <button class="viewport-btn" data-width="375px">Mobile</button>
+              <button type="button" class="viewport-btn active" data-width="100%">Desktop</button>
+              <button type="button" class="viewport-btn" data-width="768px">Tablet</button>
+              <button type="button" class="viewport-btn" data-width="375px">Mobile</button>
             </div>
           </div>
           <div class="preview-iframe-container" style="height: 520px;">
@@ -1114,8 +1123,8 @@
           </div>
           <div style="display: flex; gap: 0.35rem; align-items: center;">
             <button type="button" id="toggleTerminalSizeBtn" class="btn btn-secondary btn-xs" title="Expand / Collapse Terminal">↕ Toggle Height</button>
-            <button id="copyLogsBtn" class="btn btn-secondary btn-xs">📋 Copy</button>
-            <button id="clearLogsBtn" class="btn btn-secondary btn-xs">Clear</button>
+            <button type="button" id="copyLogsBtn" class="btn btn-secondary btn-xs">📋 Copy</button>
+            <button type="button" id="clearLogsBtn" class="btn btn-secondary btn-xs">Clear</button>
           </div>
         </div>
         <div id="terminalBody" class="terminal-body" style="height: 120px; font-size: 0.75rem; padding: 0.65rem 0.85rem;">

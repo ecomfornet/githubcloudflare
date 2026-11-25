@@ -1966,7 +1966,129 @@ test('Complete per-project settings isolation: theme, project-scoped logos, bran
   }
 });
 
+test('atomic GitHub Git Data API deploy, GitHub Pages build baseUrl, and SYNCED vs CUSTOM post filtering work end-to-end', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pseo-gh-atomic-test-'));
+  const origFetch = globalThis.fetch;
+  try {
+    const store = new DashboardStore({ workspaceDir: tmpDir });
+    await store.executeIngestion({ sourceType: 'sitemap', urlOrList: '' });
+    const allPosts = store.listPosts();
+    assert.ok(allPosts.length >= 2);
 
+    // 1. Mark 1 post as custom_edited and verify SYNCED vs CUSTOM filtering
+    const editedSlug = allPosts[0].slug;
+    store.updatePost(editedSlug, { title: 'Custom Edited Guide' });
 
+    const customOnly = store.listPosts({ status: 'CUSTOM' });
+    assert.equal(customOnly.length, 1);
+    assert.equal(customOnly[0].slug, editedSlug);
 
+    const syncedOnly = store.listPosts({ status: 'SYNCED' });
+    assert.equal(syncedOnly.length, allPosts.length - 1);
+    assert.equal(syncedOnly.some((p) => p.slug === editedSlug), false);
 
+    // 2. Configure GitHub target (no custom domain) and verify runBuild uses GitHub Pages baseUrl in sitemap.xml & robots.txt
+    store.updateConfig({
+      cloudflare: { custom_domain: '' },
+      github: {
+        token: 'ghp_atomic_test_token_12345',
+        owner: 'atelier-org',
+        repo: 'atelier-org.github.io',
+        branch: 'main',
+        base_path: '',
+      },
+    });
+
+    const ghBuild = store.runBuild({ clean: true, targetCloud: 'github', projectName: 'atelier-org' });
+    assert.equal(ghBuild.success, true);
+    const outDir = String(ghBuild.output_dir);
+    const sitemapXml = fs.readFileSync(path.join(outDir, 'sitemap.xml'), 'utf-8');
+    const robotsTxt = fs.readFileSync(path.join(outDir, 'robots.txt'), 'utf-8');
+    assert.match(sitemapXml, /https:\/\/atelier-org\.github\.io\//);
+    assert.match(robotsTxt, /Sitemap: https:\/\/atelier-org\.github\.io\/sitemap\.xml/);
+
+    // 3. Mock GitHub Git Data API and run live atomic startGitHubDeploy
+    const apiCalls: string[] = [];
+    let createdBlobCount = 0;
+    let treeEntryCount = 0;
+    let patchedCommitSha = '';
+
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method || 'GET').toUpperCase();
+      apiCalls.push(`${method} ${url}`);
+
+      if (method === 'GET' && url.endsWith('/git/ref/heads/main')) {
+        return new Response(JSON.stringify({ object: { sha: 'basecommitsha0001' } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (method === 'GET' && url.endsWith('/git/commits/basecommitsha0001')) {
+        return new Response(JSON.stringify({ tree: { sha: 'basetreesha0001' } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (method === 'POST' && url.endsWith('/git/blobs')) {
+        createdBlobCount += 1;
+        return new Response(JSON.stringify({ sha: `blobsha_${createdBlobCount}` }), {
+          status: 201,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (method === 'POST' && url.endsWith('/git/trees')) {
+        const body = JSON.parse(String(init?.body || '{}')) as { tree?: unknown[] };
+        treeEntryCount = Array.isArray(body.tree) ? body.tree.length : 0;
+        return new Response(JSON.stringify({ sha: 'newtreesha0002' }), {
+          status: 201,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (method === 'POST' && url.endsWith('/git/commits')) {
+        return new Response(JSON.stringify({ sha: 'newcommitsha9999abcdef' }), {
+          status: 201,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (method === 'PATCH' && url.endsWith('/git/refs/heads/main')) {
+        const body = JSON.parse(String(init?.body || '{}')) as { sha?: string };
+        patchedCommitSha = String(body.sha || '');
+        return new Response(JSON.stringify({ object: { sha: patchedCommitSha } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response('Not Found', { status: 404 });
+    }) as typeof fetch;
+
+    const startRes = store.startGitHubDeploy({ dryRun: false, projectName: 'atelier-org' });
+    assert.equal(startRes.success, true);
+
+    // Wait for background Git Data API deployment to finish
+    for (let i = 0; i < 60; i++) {
+      if (store.deployJob.status === 'success' || store.deployJob.status === 'failed') break;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+
+    assert.equal(store.deployJob.status, 'success', `Expected success, got: ${store.deployJob.error}`);
+    assert.equal(store.deployJob.percent, 100);
+    assert.equal(store.deployJob.commit_sha, 'newcommitsha9999abcdef');
+    assert.equal(store.deployJob.live_url, 'https://atelier-org.github.io');
+    assert.equal(patchedCommitSha, 'newcommitsha9999abcdef');
+    assert.ok(createdBlobCount >= 10, `Expected >= 10 blobs uploaded, got ${createdBlobCount}`);
+    assert.ok(treeEntryCount >= 10, `Expected >= 10 tree entries, got ${treeEntryCount}`);
+    assert.equal(apiCalls.some((c) => c.startsWith('POST ') && c.endsWith('/git/trees')), true);
+    assert.equal(apiCalls.some((c) => c.startsWith('PATCH ') && c.endsWith('/git/refs/heads/main')), true);
+
+    // 4. Missing credentials returns clean immediate failure without hanging
+    store.updateConfig({ github: { token: '', owner: '', repo: '' } });
+    const failRes = store.startGitHubDeploy({ dryRun: false, projectName: 'atelier-org' });
+    assert.equal(failRes.success, false);
+    assert.equal(store.deployJob.status, 'failed');
+    assert.match(String(store.deployJob.error), /GitHub token, owner, and repo/);
+  } finally {
+    globalThis.fetch = origFetch;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});

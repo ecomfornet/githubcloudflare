@@ -52,6 +52,14 @@
   - `hydrateConfigFromProject(item)` restores all project-scoped fields cleanly into `this.config` on `initProjects()`, `createProject()`, and `switchProject()` (zero leakage from previous projects).
 - **Frontend Sync (`public/app.js`)**: On project switch or creation, immediately synchronize platform view (`cf`/`gh`), all Step 1–4 inputs (fixing `gh_owner`/`gh_repo` field mapping), logo preview (`updateLogoPreview`), theme cards, routing cards, custom `<head>` code, Theme Customizer draft, posts catalog, Site Pages (9) (`refreshStaticPages`), and live preview iframe (`triggerPreview`).
 
-
-
-
+## 8. End-to-End Hardening & Atomic GitHub Git Data API Deployment
+- **Real Atomic GitHub Deployment (`src/store.ts`)**: Replace the live stub in `startGitHubDeploy()` with real GitHub Git Data API orchestration: collect all compiled files under `outputDir`, resolve `git/ref/heads/<branch>` and base commit/tree (with empty-repo bootstrap fallback via `/contents/`), create blobs concurrently, construct a single Git tree, create a single atomic commit, and fast-forward the branch ref while streaming progress (`percent`, `stage`, `message`, `commit_sha`, `live_url`) to `deployJob`.
+- **Platform-Accurate Build URLs & Filtering (`src/store.ts`, `server.ts`)**:
+  - `runBuild()` computes GitHub Pages `baseUrl` (`https://<repo>` for `*.github.io` repos, else `https://<owner>.github.io/<repo>`) when building for `github` without a custom domain, ensuring `sitemap.xml`, `robots.txt`, and canonicals match the target platform.
+  - `GET /api/posts` and `listPosts()` support `status=SYNCED|CUSTOM` alongside `custom_only` so the Catalog status filter works accurately for both `CUSTOM` and `SYNCED` posts.
+  - `startIngestJob()` persists `wp_api_url` on the active project when ingesting via `wp_api`.
+- **SPA Reliability & UX Fixes (`public/index.html`, `public/app.js`)**:
+  - Preserve active platform when clicking Step 3 -> Step 4 navigation buttons.
+  - Dedicated GitHub build progress container (`#ghBuildProgressBarContainer`) and live GitHub deploy polling progress/error handling (`status === 'error' || status === 'failed'`).
+  - Unified terminal log buffer (`cachedLogs`) and fixed filter matching (`cloudflare`/`cf`, `github`/`gh`, `build`).
+  - Accurate `is_org` detection on Step 1 GitHub repo creation, dynamic `wp_api` source label/placeholder, stale-slug guard in `populatePreviewSelect()`, 404-free Catalog thumbnails, deduplicated Step 1 auto-save listeners, `#ghStatusFeedback` inline status box, and modal Escape/backdrop + file-input reset polish.

@@ -99,6 +99,7 @@
     tokenStatusBadge: document.getElementById('tokenStatusBadge'),
     cfgGithubBranch: document.getElementById('cfgGithubBranch'),
     cfgGithubBasePath: document.getElementById('cfgGithubBasePath'),
+    ghStatusFeedback: document.getElementById('ghStatusFeedback'),
     buildOptionsForm: document.getElementById('buildOptionsForm'),
     cfgTheme: document.getElementById('cfgTheme'),
     cfgRoutingMode: document.getElementById('cfgRoutingMode'),
@@ -139,6 +140,7 @@
     ingestionForm: document.getElementById('ingestionForm'),
     ingestSourceType: document.getElementById('ingestSourceType'),
     groupSitemapUrl: document.getElementById('groupSitemapUrl'),
+    ingestUrlLabel: document.getElementById('ingestUrlLabel'),
     groupUrlList: document.getElementById('groupUrlList'),
     ingestSitemapUrl: document.getElementById('ingestSitemapUrl'),
     ingestUrlList: document.getElementById('ingestUrlList'),
@@ -287,6 +289,10 @@
     buildProgressLabel: document.getElementById('buildProgressLabel'),
     buildProgressPercent: document.getElementById('buildProgressPercent'),
     buildProgressBar: document.getElementById('buildProgressBar'),
+    ghBuildProgressBarContainer: document.getElementById('ghBuildProgressBarContainer'),
+    ghBuildProgressLabel: document.getElementById('ghBuildProgressLabel'),
+    ghBuildProgressPercent: document.getElementById('ghBuildProgressPercent'),
+    ghBuildProgressBar: document.getElementById('ghBuildProgressBar'),
     ghDeployProgressBarContainer: document.getElementById('ghDeployProgressBarContainer'),
     ghDeployProgressLabel: document.getElementById('ghDeployProgressLabel'),
     ghDeployProgressPercent: document.getElementById('ghDeployProgressPercent'),
@@ -337,11 +343,36 @@
     }, 4000);
   }
 
+  let currentTerminalFilter = 'all';
+  let cachedTerminalLogs = ['[INFO] Multi-Cloud Deployment Dashboard ready. Logs stream live.'];
+
+  function matchesTerminalFilter(line, filter) {
+    if (!filter || filter === 'all') return true;
+    const text = String(line || '');
+    const upper = text.toUpperCase();
+    if (filter === 'cf' || filter === 'cloudflare') {
+      return upper.includes('[CLOUDFLARE') || upper.includes('CLOUDFLARE') || upper.includes('WORKERS');
+    }
+    if (filter === 'gh' || filter === 'github') {
+      return upper.includes('[GITHUB') || upper.includes('[DEPLOY') || upper.includes('GITHUB');
+    }
+    if (filter === 'build') {
+      return upper.includes('[BUILD') || upper.includes('[ASSETS') || upper.includes('[WEBP');
+    }
+    return true;
+  }
+
   function appendTerminalLog(msg, type = 'info') {
+    const text = String(msg || '');
+    cachedTerminalLogs.push(text);
+    if (cachedTerminalLogs.length > 500) {
+      cachedTerminalLogs = cachedTerminalLogs.slice(-500);
+    }
     if (!DOM.terminalBody) return;
+    if (!matchesTerminalFilter(text, currentTerminalFilter)) return;
     const line = document.createElement('div');
     line.className = `log-${type}`;
-    line.textContent = msg;
+    line.textContent = text;
     DOM.terminalBody.appendChild(line);
     DOM.terminalBody.scrollTop = DOM.terminalBody.scrollHeight;
   }
@@ -515,7 +546,7 @@
       setActivePlatformView(view);
     }
     updateStepperActive(tabId);
-    if (tabId === 'tab-preview' && state.selectedPostSlug) {
+    if (tabId === 'tab-preview') {
       triggerPreview();
     }
   }
@@ -775,19 +806,25 @@
     if (DOM.btnCancelNewProject) {
       DOM.btnCancelNewProject.addEventListener('click', closeNewProjectModal);
     }
+    if (DOM.modalNewProject) {
+      DOM.modalNewProject.addEventListener('click', (e) => {
+        if (e.target === DOM.modalNewProject) closeNewProjectModal();
+      });
+    }
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && DOM.modalNewProject && DOM.modalNewProject.style.display === 'flex') {
+        closeNewProjectModal();
+      }
+    });
     if (DOM.newProjectForm) {
       DOM.newProjectForm.addEventListener('submit', handleCreateNewProject);
     }
 
-    // Auto-save Step 1 inputs on change or blur
+    // Auto-save Step 1 ingestion inputs on change or blur (CF inputs have dedicated debounced save in initListeners)
     const step1Inputs = [
       DOM.ingestSitemapUrl,
       DOM.ingestMaxPosts,
       DOM.ingestDownloadImages,
-      DOM.cfgCfProjectName,
-      DOM.cfgCfCustomDomain,
-      DOM.cfgStep1GithubOwner,
-      DOM.cfgStep1GithubRepo,
     ].filter(Boolean);
     step1Inputs.forEach((el) => {
       el.addEventListener('change', autoSaveActiveProject);
@@ -796,17 +833,13 @@
       }
     });
 
-    // Two-way synchronization for Step 1 GitHub inputs
+    // Two-way synchronization for Step 1 GitHub inputs (single debounced save)
     if (DOM.cfgStep1GithubOwner) {
       DOM.cfgStep1GithubOwner.addEventListener('change', async () => {
         const val = DOM.cfgStep1GithubOwner.value.trim();
         updateRootDomainPreview();
-        try {
-          await api('/api/config', 'POST', { github: { owner: val } });
-          showToast(`GitHub Organization updated to '${val}'`, 'info');
-        } catch (e) {
-          console.warn('Auto-save of GitHub owner failed:', e);
-        }
+        await autoSaveActiveProject();
+        if (val) showToast(`GitHub Organization updated to '${val}'`, 'info');
       });
     }
 
@@ -814,12 +847,8 @@
       DOM.cfgStep1GithubRepo.addEventListener('change', async () => {
         const val = DOM.cfgStep1GithubRepo.value.trim();
         updateRootDomainPreview();
-        try {
-          await api('/api/config', 'POST', { github: { repo: val } });
-          showToast(`GitHub Repository updated to '${val}'`, 'info');
-        } catch (e) {
-          console.warn('Auto-save of GitHub repo failed:', e);
-        }
+        await autoSaveActiveProject();
+        if (val) showToast(`GitHub Repository updated to '${val}'`, 'info');
       });
     }
   }
@@ -1287,6 +1316,7 @@
           DOM.step1GithubTokenDetectedBadge.style.color = '#10B981';
         }
         updateRootDomainPreview();
+        return res.accounts;
       } else if (res.token_invalid) {
         selects.forEach(sel => {
           sel.innerHTML = '<option value="">❌ Invalid Token (401 Unauthorized)</option>';
@@ -1299,6 +1329,7 @@
           DOM.step1GithubTokenDetectedBadge.textContent = '✕ Invalid Token in Settings';
           DOM.step1GithubTokenDetectedBadge.style.color = '#EF4444';
         }
+        return [];
       } else {
         selects.forEach(sel => {
           sel.innerHTML = '<option value="">No organizations found on token</option>';
@@ -1307,12 +1338,14 @@
           DOM.tokenStatusBadge.textContent = '● Connected (0 orgs)';
           DOM.tokenStatusBadge.style.color = '#10B981';
         }
+        return [];
       }
     } catch (err) {
       console.warn('Failed to load GitHub accounts:', err);
       selects.forEach(sel => {
         sel.innerHTML = '<option value="">⚠️ Could not detect accounts</option>';
       });
+      return [];
     }
   }
 
@@ -1405,10 +1438,15 @@
       DOM.previewPostSelect.appendChild(opt);
     });
 
-    if (current && current !== '__sample__') {
+    const currentExists =
+      current === '__hub__' ||
+      current === '__sample__' ||
+      (current && state.posts.some((p) => p.slug === current));
+
+    if (currentExists) {
       DOM.previewPostSelect.value = current;
       state.selectedPostSlug = current;
-    } else if (state.posts.length > 0 && !current) {
+    } else if (state.posts.length > 0) {
       DOM.previewPostSelect.value = state.posts[0].slug;
       state.selectedPostSlug = state.posts[0].slug;
     } else {
@@ -1416,12 +1454,17 @@
       state.selectedPostSlug = '__sample__';
     }
 
-    if (state.selectedPostSlug === '__sample__') {
-      DOM.previewLiveTitle.value = 'Modern Scandinavian Living Room Design: 15 Warm Minimalist Ideas';
-    } else if (state.selectedPostSlug) {
-      const post = state.posts.find((p) => p.slug === state.selectedPostSlug);
-      if (post) {
-        DOM.previewLiveTitle.value = post.title || '';
+    if (DOM.previewLiveTitle) {
+      if (state.selectedPostSlug === '__sample__') {
+        DOM.previewLiveTitle.value = 'Modern Scandinavian Living Room Design: 15 Warm Minimalist Ideas';
+      } else if (state.selectedPostSlug === '__hub__') {
+        DOM.previewLiveTitle.value =
+          (state.config?.branding?.brand_name || 'Anna Deco') + ' — Editorial Homepage Hub';
+      } else if (state.selectedPostSlug) {
+        const post = state.posts.find((p) => p.slug === state.selectedPostSlug);
+        if (post) {
+          DOM.previewLiveTitle.value = post.title || '';
+        }
       }
     }
   }
@@ -1433,7 +1476,9 @@
       const cat = DOM.postCategoryFilter ? DOM.postCategoryFilter.value : '';
       const statusFilter = DOM.postStatusFilter ? DOM.postStatusFilter.value : '';
       const customOnly = statusFilter === 'CUSTOM';
-      const res = await api(`/api/posts?q=${encodeURIComponent(q)}&category=${encodeURIComponent(cat)}&custom_only=${customOnly}`);
+      const res = await api(
+        `/api/posts?q=${encodeURIComponent(q)}&category=${encodeURIComponent(cat)}&custom_only=${customOnly}&status=${encodeURIComponent(statusFilter)}`
+      );
       state.posts = res.posts || [];
       renderPostsTable();
       populateCategoryFilter();
@@ -1470,14 +1515,15 @@
       const tr = document.createElement('tr');
       const badgeClass = post.custom_edited ? 'badge-custom' : 'badge-synced';
       const badgeText = post.custom_edited ? 'CUSTOM' : 'SYNCED';
-      const thumb = post.local_image_path || `/assets/images/${post.slug}.svg`;
+      const fallbackThumb = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='44' height='30'><rect width='44' height='30' fill='%23334155'/></svg>";
+      const thumb = post.local_image_path || post.image_url || fallbackThumb;
       tr.innerHTML = `
 
         <td><span class="badge ${badgeClass}">${badgeText}</span></td>
 
         <td>
 
-          <img src="${thumb}" alt="" style="width: 44px; height: 30px; object-fit: cover; border-radius: 4px; background: #334155;" onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'44\\' height=\\'30\\'><rect width=\\'44\\' height=\\'30\\' fill=\\'%23334155\\'/></svg>'">
+          <img src="${escapeHtml(thumb)}" alt="" style="width: 44px; height: 30px; object-fit: cover; border-radius: 4px; background: #334155;" onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'44\\' height=\\'30\\'><rect width=\\'44\\' height=\\'30\\' fill=\\'%23334155\\'/></svg>'">
 
         </td>
 
@@ -3247,10 +3293,15 @@
           DOM.step1OrgStatusFeedback.innerHTML = `Creating repository <strong>${escapeHtml(owner)}/${escapeHtml(repo)}</strong> on GitHub...`;
         }
         try {
+          const selectedOpt = DOM.cfgStep1GithubAccount?.selectedOptions?.[0];
+          const isOrg =
+            selectedOpt && selectedOpt.value === owner
+              ? selectedOpt.dataset.isOrg === 'true'
+              : Boolean(state.config?.github?.is_org);
           const res = await api('/api/github/create-repo', 'POST', {
             owner,
             repo,
-            is_org: true,
+            is_org: isOrg,
             token: token
           });
           if (res.success) {
@@ -3296,10 +3347,37 @@
       DOM.btnVerifyGhToken.addEventListener('click', async () => {
         DOM.btnVerifyGhToken.disabled = true;
         DOM.btnVerifyGhToken.innerHTML = '<span>⏳ Querying GitHub...</span>';
-        await loadGithubAccounts();
-        DOM.btnVerifyGhToken.disabled = false;
-        DOM.btnVerifyGhToken.innerHTML = '<span>⚡ Test Token &amp; Detect Orgs</span>';
-        showToast('GitHub token tested and accounts detected.', 'info');
+        if (DOM.ghStatusFeedback) {
+          DOM.ghStatusFeedback.style.display = 'block';
+          DOM.ghStatusFeedback.style.background = 'rgba(59, 130, 246, 0.15)';
+          DOM.ghStatusFeedback.style.color = '#93C5FD';
+          DOM.ghStatusFeedback.textContent = 'Testing GitHub Personal Access Token & querying organizations...';
+        }
+        try {
+          const accounts = await loadGithubAccounts();
+          const count = Array.isArray(accounts) ? accounts.length : 0;
+          if (DOM.ghStatusFeedback) {
+            if (count > 0) {
+              DOM.ghStatusFeedback.style.background = 'rgba(16, 185, 129, 0.18)';
+              DOM.ghStatusFeedback.style.color = '#34D399';
+              DOM.ghStatusFeedback.textContent = `✅ GitHub token verified. Detected ${count} account/organization(s).`;
+            } else {
+              DOM.ghStatusFeedback.style.background = 'rgba(245, 158, 11, 0.18)';
+              DOM.ghStatusFeedback.style.color = '#FCD34D';
+              DOM.ghStatusFeedback.textContent = '⚠️ No GitHub accounts detected. Enter a valid Personal Access Token with repo & read:org scopes.';
+            }
+          }
+          showToast(count > 0 ? `GitHub token verified (${count} accounts detected).` : 'No GitHub token or accounts detected.', count > 0 ? 'success' : 'warning');
+        } catch (err) {
+          if (DOM.ghStatusFeedback) {
+            DOM.ghStatusFeedback.style.background = 'rgba(239, 68, 68, 0.18)';
+            DOM.ghStatusFeedback.style.color = '#FCA5A5';
+            DOM.ghStatusFeedback.textContent = `❌ GitHub check failed: ${err.message}`;
+          }
+        } finally {
+          DOM.btnVerifyGhToken.disabled = false;
+          DOM.btnVerifyGhToken.innerHTML = '<span>⚡ Test Token &amp; Detect Orgs</span>';
+        }
       });
     }
 
@@ -3326,6 +3404,12 @@
           github: ghPayload,
         });
 
+        if (DOM.ghStatusFeedback) {
+          DOM.ghStatusFeedback.style.display = 'block';
+          DOM.ghStatusFeedback.style.background = 'rgba(16, 185, 129, 0.18)';
+          DOM.ghStatusFeedback.style.color = '#34D399';
+          DOM.ghStatusFeedback.textContent = `✅ GitHub settings saved (branch: ${ghPayload.branch || 'main'}).`;
+        }
         showToast('GitHub configuration saved.', 'success');
         await loadGithubAccounts();
         if (tokenInput && !tokenInput.includes('****')) {
@@ -3333,6 +3417,12 @@
         }
         await refreshSystem();
       } catch (err) {
+        if (DOM.ghStatusFeedback) {
+          DOM.ghStatusFeedback.style.display = 'block';
+          DOM.ghStatusFeedback.style.background = 'rgba(239, 68, 68, 0.18)';
+          DOM.ghStatusFeedback.style.color = '#FCA5A5';
+          DOM.ghStatusFeedback.textContent = `❌ Save failed: ${err.message}`;
+        }
         showToast(`Save error: ${err.message}`, 'error');
       }
     });
@@ -3486,10 +3576,18 @@
 
     // Wire file inputs across Theme gallery & Preview sidebar
     if (DOM.quickLogoFileInput) {
-      DOM.quickLogoFileInput.addEventListener('change', (e) => uploadCustomLogo(e.target.files[0]));
+      DOM.quickLogoFileInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        e.target.value = '';
+        if (file) uploadCustomLogo(file);
+      });
     }
     if (DOM.previewLogoFileInput) {
-      DOM.previewLogoFileInput.addEventListener('change', (e) => uploadCustomLogo(e.target.files[0]));
+      DOM.previewLogoFileInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        e.target.value = '';
+        if (file) uploadCustomLogo(file);
+      });
     }
 
     // Wire crop & zoom button
@@ -3511,6 +3609,13 @@
       } else {
         DOM.groupSitemapUrl.style.display = 'block';
         DOM.groupUrlList.style.display = 'none';
+        if (val === 'wp_api') {
+          if (DOM.ingestUrlLabel) DOM.ingestUrlLabel.textContent = 'WordPress Site URL';
+          if (DOM.ingestSitemapUrl) DOM.ingestSitemapUrl.placeholder = 'https://example.com';
+        } else {
+          if (DOM.ingestUrlLabel) DOM.ingestUrlLabel.textContent = 'Sitemap URL';
+          if (DOM.ingestSitemapUrl) DOM.ingestSitemapUrl.placeholder = 'https://stylesdays.com/post-sitemap8.xml';
+        }
       }
     });
 
@@ -4549,27 +4654,34 @@
     // Build Trigger
 
     async function executeBuild() {
-      if (DOM.triggerBuildBtn) {
-        DOM.triggerBuildBtn.disabled = true;
-        DOM.triggerBuildBtn.innerHTML = '<span>⏳ Compiling...</span>';
+      const isCf = currentPlatformMode === 'cloudflare';
+      const activePlatform = isCf ? 'cloudflare' : 'github';
+      const activeBtn = isCf ? DOM.triggerBuildBtn : DOM.triggerBuildGhBtn;
+      const defaultBtnHtml = isCf ? '<span>🔨 Build Static Site</span>' : '🔨 Build for GitHub';
+      const progressBox = isCf ? DOM.buildProgressBarContainer : DOM.ghBuildProgressBarContainer;
+      const progressBar = isCf ? DOM.buildProgressBar : DOM.ghBuildProgressBar;
+      const progressPct = isCf ? DOM.buildProgressPercent : DOM.ghBuildProgressPercent;
+      const progressLabel = isCf ? DOM.buildProgressLabel : DOM.ghBuildProgressLabel;
+
+      if (activeBtn) {
+        activeBtn.disabled = true;
+        activeBtn.innerHTML = '<span>⏳ Compiling...</span>';
       }
-      if (DOM.buildProgressBarContainer) {
-        DOM.buildProgressBarContainer.style.display = 'block';
-        if (DOM.buildProgressBar) DOM.buildProgressBar.style.width = '30%';
-        if (DOM.buildProgressPercent) DOM.buildProgressPercent.textContent = '30%';
-        if (DOM.buildProgressLabel) DOM.buildProgressLabel.textContent = 'Compiling HTML templates, XML sitemaps & schemas...';
+      if (progressBox) {
+        progressBox.style.display = 'block';
+        if (progressBar) progressBar.style.width = '30%';
+        if (progressPct) progressPct.textContent = '30%';
+        if (progressLabel) progressLabel.textContent = 'Compiling HTML templates, XML sitemaps & schemas...';
       }
       try {
-        appendTerminalLog('[BUILD] Starting static compilation to disk...', 'info');
-        const isCf = (typeof currentPlatformMode !== 'undefined' && currentPlatformMode === 'cloudflare') || (state.activePlatform === 'cloudflare') || (!document.getElementById('workspaceCloudflare')?.classList.contains('hidden') && document.getElementById('workspaceCloudflare')?.style.display !== 'none');
-        const activePlatform = isCf ? 'cloudflare' : 'github';
+        appendTerminalLog(`[BUILD] Starting static compilation for ${activePlatform}...`, 'info');
         const workerInput = document.getElementById('cfgCfProjectName')?.value?.trim();
         const activeProject = isCf
           ? (workerInput || state.activeProject || 'stylesdays')
-          : (DOM.cfgStep1GithubOwner?.value?.trim() || state.config?.github?.owner || '');
-        if (DOM.buildProgressBar) DOM.buildProgressBar.style.width = '65%';
-        if (DOM.buildProgressPercent) DOM.buildProgressPercent.textContent = '65%';
-        if (DOM.buildProgressLabel) DOM.buildProgressLabel.textContent = 'Generating 4,300+ internal routes and JSON-LD schemas...';
+          : (DOM.cfgStep1GithubOwner?.value?.trim() || state.config?.github?.owner || state.activeProject || 'stylesdays');
+        if (progressBar) progressBar.style.width = '65%';
+        if (progressPct) progressPct.textContent = '65%';
+        if (progressLabel) progressLabel.textContent = 'Generating routes, static pages, sitemap.xml & JSON-LD schemas...';
         const currentTheme = (DOM.quickDeployThemeSelect && DOM.quickDeployThemeSelect.value) || (DOM.cfgTheme && DOM.cfgTheme.value) || undefined;
         const currentRouting = (DOM.cfgRoutingMode && DOM.cfgRoutingMode.value) || undefined;
         const res = await api('/api/build', 'POST', {
@@ -4581,24 +4693,24 @@
         });
 
         const assetMsg = res.assets_copied ? ` (${res.assets_copied} image assets copied)` : '';
-        if (DOM.buildProgressBar) DOM.buildProgressBar.style.width = '100%';
-        if (DOM.buildProgressPercent) DOM.buildProgressPercent.textContent = '100%';
-        if (DOM.buildProgressLabel) DOM.buildProgressLabel.textContent = `✅ Build complete: ${res.files_generated} files generated!`;
+        if (progressBar) progressBar.style.width = '100%';
+        if (progressPct) progressPct.textContent = '100%';
+        if (progressLabel) progressLabel.textContent = `✅ Build complete: ${res.files_generated} files generated!`;
         showToast(`Build complete: ${res.files_generated} files generated${assetMsg}.`, 'success');
         appendTerminalLog(`[BUILD SUCCESS] Generated ${res.files_generated} static files in ${res.output_dir}${assetMsg}`, 'success');
         await refreshSystem();
         setTimeout(() => {
-          if (DOM.buildProgressBarContainer) DOM.buildProgressBarContainer.style.display = 'none';
-          if (DOM.triggerBuildBtn) {
-            DOM.triggerBuildBtn.disabled = false;
-            DOM.triggerBuildBtn.innerHTML = '<span>🔨 Build Static Site</span>';
+          if (progressBox) progressBox.style.display = 'none';
+          if (activeBtn) {
+            activeBtn.disabled = false;
+            activeBtn.innerHTML = defaultBtnHtml;
           }
-        }, 3000);
+        }, 2500);
       } catch (err) {
-        if (DOM.buildProgressLabel) DOM.buildProgressLabel.textContent = `❌ Build failed: ${err.message}`;
-        if (DOM.triggerBuildBtn) {
-          DOM.triggerBuildBtn.disabled = false;
-          DOM.triggerBuildBtn.innerHTML = '<span>🔨 Build Static Site</span>';
+        if (progressLabel) progressLabel.textContent = `❌ Build failed: ${err.message}`;
+        if (activeBtn) {
+          activeBtn.disabled = false;
+          activeBtn.innerHTML = defaultBtnHtml;
         }
         showToast(`Build failed: ${err.message}`, 'error');
         appendTerminalLog(`[BUILD ERROR] ${err.message}`, 'error');
@@ -4607,19 +4719,16 @@
 
     if (DOM.triggerBuildBtn) DOM.triggerBuildBtn.addEventListener('click', executeBuild);
 
-    // Deployment Log Poller & Terminal Filter State
-    let currentFilter = 'all';
-    let cachedLogs = [];
-
     function renderTerminalLogs(logs) {
-      cachedLogs = logs || [];
+      if (Array.isArray(logs)) {
+        cachedTerminalLogs = logs.slice();
+      }
       if (!DOM.terminalBody) return;
       DOM.terminalBody.innerHTML = '';
-      cachedLogs.forEach((line) => {
-        const lower = line.toLowerCase();
-        if (currentFilter === 'cf' && !line.includes('[CLOUDFLARE]')) return;
-        if (currentFilter === 'gh' && !line.includes('[GITHUB]') && !line.includes('[DEPLOY]') && !line.includes('GitHub')) return;
-        if (currentFilter === 'build' && !line.includes('[BUILD]') && !line.includes('[ASSETS]') && !line.includes('[WEBP]')) return;
+      let rendered = 0;
+      cachedTerminalLogs.forEach((line) => {
+        if (!matchesTerminalFilter(line, currentTerminalFilter)) return;
+        const lower = String(line || '').toLowerCase();
         let cls = 'log-info';
         if (lower.includes('error') || lower.includes('fail') || lower.includes('fatal')) cls = 'log-error';
         else if (lower.includes('success') || lower.includes('deployed') || lower.includes('verified')) cls = 'log-success';
@@ -4627,7 +4736,14 @@
         div.className = cls;
         div.textContent = line;
         DOM.terminalBody.appendChild(div);
+        rendered += 1;
       });
+      if (rendered === 0) {
+        const emptyDiv = document.createElement('div');
+        emptyDiv.className = 'log-info';
+        emptyDiv.textContent = `[INFO] No log entries match filter '${currentTerminalFilter}'.`;
+        DOM.terminalBody.appendChild(emptyDiv);
+      }
 
       DOM.terminalBody.scrollTop = DOM.terminalBody.scrollHeight;
     }
@@ -4641,13 +4757,25 @@
             renderTerminalLogs(statusRes.logs);
           }
 
-          if (statusRes.status === 'success' || statusRes.status === 'failed') {
+          const pct = Number(statusRes.percent || (statusRes.job && statusRes.job.percent) || 25);
+          const msg = statusRes.message || (statusRes.job && statusRes.job.message) || 'Deploying to GitHub Pages...';
+          if (DOM.ghDeployProgressBar) {
+            DOM.ghDeployProgressBar.style.width = `${Math.min(98, Math.max(15, pct))}%`;
+          }
+          if (DOM.ghDeployProgressPercent) {
+            DOM.ghDeployProgressPercent.textContent = `${pct}%`;
+          }
+          if (DOM.ghDeployProgressLabel) {
+            DOM.ghDeployProgressLabel.textContent = msg;
+          }
+
+          if (statusRes.status === 'success' || statusRes.status === 'failed' || statusRes.status === 'error') {
             clearInterval(state.logPollInterval);
             state.logPollInterval = null;
-            if (onFinished) onFinished(statusRes.status === 'success');
+            if (onFinished) onFinished(statusRes.status === 'success', statusRes);
           }
         } catch (e) {}
-      }, 1200);
+      }, 900);
     }
 
     // Terminal Filter Buttons
@@ -4656,12 +4784,10 @@
         btn.addEventListener('click', () => {
           DOM.termFilterBtns.forEach((b) => b.classList.remove('active'));
           btn.classList.add('active');
-          currentFilter = btn.getAttribute('data-filter') || 'all';
-          renderTerminalLogs(cachedLogs);
+          currentTerminalFilter = btn.getAttribute('data-filter') || 'all';
+          renderTerminalLogs();
         });
-
       });
-
     }
 
     // Copy Terminal Logs
@@ -4674,16 +4800,19 @@
           }).catch(() => {
             showToast('Unable to copy logs to clipboard.', 'error');
           });
-
         }
       });
-
     }
 
     // Deploy Trigger: GitHub Pages
     DOM.triggerDeployBtn.addEventListener('click', async () => {
-      const dryRun = DOM.deployDryRun.checked;
-      const ghOwner = DOM.cfgStep1GithubOwner?.value?.trim() || state.config?.github?.owner || '';
+      if (state.isDeploying) {
+        showToast('Deployment is already in progress...', 'warning');
+        return;
+      }
+      const dryRun = DOM.deployDryRun ? DOM.deployDryRun.checked : false;
+      const ghOwner = DOM.cfgStep1GithubOwner?.value?.trim() || state.config?.github?.owner || state.activeProject || '';
+      state.isDeploying = true;
       if (DOM.triggerDeployBtn) {
         DOM.triggerDeployBtn.disabled = true;
         DOM.triggerDeployBtn.innerHTML = '<span>⏳ Deploying to GitHub...</span>';
@@ -4695,18 +4824,25 @@
         if (DOM.ghDeployProgressLabel) DOM.ghDeployProgressLabel.textContent = 'Initiating GitHub Pages deployment...';
       }
       try {
-        appendTerminalLog(`[GITHUB] Initiating Pages deployment (owner=${ghOwner}, dry_run=${dryRun})...`, 'info');
+        appendTerminalLog(`[GITHUB] Initiating Pages deployment (owner=${ghOwner || 'default'}, dry_run=${dryRun})...`, 'info');
         const res = await api('/api/deploy', 'POST', {
           dry_run: dryRun,
           project_name: ghOwner
         });
 
-        showToast(res.message, 'info');
-        startLogPolling((success) => {
-          if (DOM.ghDeployProgressBar) DOM.ghDeployProgressBar.style.width = '100%';
-          if (DOM.ghDeployProgressPercent) DOM.ghDeployProgressPercent.textContent = '100%';
+        if (res.success === false) {
+          throw new Error(res.error || 'GitHub deployment failed to start.');
+        }
+
+        showToast(res.message || 'GitHub deployment started.', 'info');
+        startLogPolling((success, statusRes) => {
+          state.isDeploying = false;
+          if (DOM.ghDeployProgressBar) DOM.ghDeployProgressBar.style.width = success ? '100%' : '100%';
+          if (DOM.ghDeployProgressPercent) DOM.ghDeployProgressPercent.textContent = success ? '100%' : 'ERR';
           if (DOM.ghDeployProgressLabel) {
-            DOM.ghDeployProgressLabel.textContent = success ? '✅ GitHub Pages deployment completed!' : '❌ GitHub Pages deployment encountered errors.';
+            DOM.ghDeployProgressLabel.textContent = success
+              ? `✅ ${statusRes?.message || 'GitHub Pages deployment completed!'}`
+              : `❌ ${statusRes?.error || statusRes?.message || 'GitHub Pages deployment encountered errors.'}`;
           }
           if (DOM.triggerDeployBtn) {
             DOM.triggerDeployBtn.disabled = false;
@@ -4716,12 +4852,16 @@
           if (success) {
             showToast('GitHub Pages deployment completed successfully!', 'success');
           } else {
-            showToast('GitHub Pages deployment encountered errors.', 'error');
+            showToast(statusRes?.error || 'GitHub Pages deployment encountered errors.', 'error');
           }
           refreshSystem();
         });
 
       } catch (err) {
+        state.isDeploying = false;
+        if (DOM.ghDeployProgressLabel) {
+          DOM.ghDeployProgressLabel.textContent = `❌ ${err.message}`;
+        }
         if (DOM.triggerDeployBtn) {
           DOM.triggerDeployBtn.disabled = false;
           DOM.triggerDeployBtn.innerHTML = '<span>🚀 Deploy to GitHub Pages</span>';
@@ -4835,7 +4975,7 @@
 
     // Clear Terminal Logs
     DOM.clearLogsBtn.addEventListener('click', () => {
-      cachedLogs = [];
+      cachedTerminalLogs = ['[INFO] Terminal log cleared.'];
       DOM.terminalBody.innerHTML = '<div class="log-info">[INFO] Terminal log cleared.</div>';
     });
   }

@@ -1163,14 +1163,16 @@ export class DashboardStore {
     return this.getConfigMasked();
   }
 
-  listPosts(filters: { query?: string; category?: string; customOnly?: boolean } = {}): Array<PostItem & { diff_status: string }> {
+  listPosts(filters: { query?: string; category?: string; customOnly?: boolean; status?: string } = {}): Array<PostItem & { diff_status: string }> {
     const q = (filters.query || '').trim().toLowerCase();
     const cat = (filters.category || '').trim().toLowerCase();
     const customOnly = Boolean(filters.customOnly);
+    const statusFilter = (filters.status || '').trim().toUpperCase();
 
     return Object.values(this.manifest.posts)
       .filter((p) => {
-        if (customOnly && !p.custom_edited) return false;
+        if ((customOnly || statusFilter === 'CUSTOM') && !p.custom_edited) return false;
+        if (statusFilter === 'SYNCED' && p.custom_edited) return false;
         if (cat && p.category.toLowerCase() !== cat && p.category_slug.toLowerCase() !== cat) return false;
         if (q) {
           const hay = `${p.title} ${p.slug} ${p.excerpt} ${p.category}`.toLowerCase();
@@ -1637,6 +1639,9 @@ export class DashboardStore {
     if (urlOrList && sourceType === 'sitemap') {
       this.config.ingestion.sitemap_url = urlOrList;
       if (this.projects[this.activeProjectId]) this.projects[this.activeProjectId].sitemap_url = urlOrList;
+    } else if (urlOrList && sourceType === 'wp_api') {
+      this.config.ingestion.wp_api_url = urlOrList;
+      if (this.projects[this.activeProjectId]) this.projects[this.activeProjectId].wp_api_url = urlOrList;
     }
     if (maxPosts !== undefined) {
       this.config.ingestion.max_posts = maxPosts;
@@ -1876,9 +1881,19 @@ export class DashboardStore {
     const posts = Object.values(this.manifest.posts);
     const categories = deriveCategories(this.manifest.posts);
     const customDomain = activeProj?.cf_custom_domain || this.config.cloudflare.custom_domain || '';
+    const computeGitHubPagesUrl = (): string => {
+      const ghOwner = (activeProj?.gh_owner || this.config.github.owner || '').trim();
+      const ghRepo = (activeProj?.gh_repo || this.config.github.repo || '').trim();
+      if (ghRepo && ghRepo.toLowerCase().endsWith('.github.io')) return `https://${ghRepo}`;
+      if (ghOwner && ghRepo) return `https://${ghOwner}.github.io/${ghRepo}`;
+      if (ghOwner) return `https://${ghOwner}.github.io`;
+      return getCloudflareLiveUrl(this.config.cloudflare);
+    };
     const baseUrl = hasValidDomainHost(customDomain)
       ? `https://${stripProtocol(customDomain)}`
-      : getCloudflareLiveUrl(this.config.cloudflare);
+      : isCloudflare
+        ? getCloudflareLiveUrl(this.config.cloudflare)
+        : computeGitHubPagesUrl();
     const identity = resolveSiteIdentity({
       customDomain,
       baseUrl,
@@ -2464,9 +2479,281 @@ export class DashboardStore {
     };
   }
 
+  private collectRelativeFiles(rootDir: string, currentDir = rootDir): string[] {
+    if (!fs.existsSync(currentDir)) return [];
+    const results: string[] = [];
+    for (const entry of fs.readdirSync(currentDir, { withFileTypes: true })) {
+      const fullPath = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) {
+        results.push(...this.collectRelativeFiles(rootDir, fullPath));
+      } else if (entry.isFile()) {
+        const rel = path.relative(rootDir, fullPath).split(path.sep).join('/');
+        if (rel) results.push(rel);
+      }
+    }
+    return results.sort();
+  }
+
+  private async executeGitHubGitDataDeploy(params: {
+    outputDir: string;
+    owner: string;
+    repo: string;
+    branch: string;
+    basePath: string;
+    token: string;
+    liveUrl: string;
+    startedAtMs: number;
+  }): Promise<void> {
+    const { outputDir, owner, repo, branch, basePath, token, liveUrl, startedAtMs } = params;
+    const headers: Record<string, string> = {
+      Accept: 'application/vnd.github+json',
+      'User-Agent': 'pSEO-Dashboard/2.0',
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    };
+    const repoBase = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const encodedBranch = branch
+      .split('/')
+      .map((s) => encodeURIComponent(s))
+      .join('/');
+
+    try {
+      const relFiles = this.collectRelativeFiles(outputDir);
+      if (relFiles.length === 0) {
+        throw new Error(`No compiled static files found in '${outputDir}'.`);
+      }
+
+      this.deployJob.stage = 'connecting';
+      this.deployJob.percent = 30;
+      this.deployJob.total_files = relFiles.length;
+      this.deployJob.files_count = relFiles.length;
+      this.deployJob.message = `Resolving Git reference refs/heads/${branch} on ${owner}/${repo}...`;
+      this.log(`[GITHUB] Resolving refs/heads/${branch} for ${owner}/${repo} (${relFiles.length} files)...`);
+
+      let refRes = await fetch(`${repoBase}/git/ref/heads/${encodedBranch}`, {
+        headers,
+        signal: AbortSignal.timeout(20000),
+      });
+
+      // Bootstrap empty repository or missing branch via .nojekyll commit
+      if (refRes.status === 404 || refRes.status === 409) {
+        this.deployJob.message = `Bootstrapping branch '${branch}' on ${owner}/${repo}...`;
+        this.log(`[GITHUB] Branch '${branch}' not found or repo empty — bootstrapping initial commit...`);
+        const bootRes = await fetch(`${repoBase}/contents/.nojekyll`, {
+          method: 'PUT',
+          headers,
+          body: JSON.stringify({
+            message: 'Initialize GitHub Pages branch (.nojekyll)',
+            content: '',
+            branch,
+          }),
+          signal: AbortSignal.timeout(20000),
+        });
+        if (!bootRes.ok) {
+          const bootErr = await bootRes.text().catch(() => `HTTP ${bootRes.status}`);
+          throw new Error(`Failed to bootstrap branch '${branch}' on ${owner}/${repo}: ${bootErr}`);
+        }
+        refRes = await fetch(`${repoBase}/git/ref/heads/${encodedBranch}`, {
+          headers,
+          signal: AbortSignal.timeout(20000),
+        });
+      }
+
+      if (!refRes.ok) {
+        const refErr = await refRes.text().catch(() => `HTTP ${refRes.status}`);
+        throw new Error(`Unable to read Git ref heads/${branch} (HTTP ${refRes.status}): ${refErr}`);
+      }
+
+      const refData = (await refRes.json()) as { object?: { sha?: string } };
+      const headSha = refData?.object?.sha;
+      if (!headSha) {
+        throw new Error(`Git ref heads/${branch} did not return a commit SHA.`);
+      }
+
+      const commitRes = await fetch(`${repoBase}/git/commits/${encodeURIComponent(headSha)}`, {
+        headers,
+        signal: AbortSignal.timeout(20000),
+      });
+      if (!commitRes.ok) {
+        const errText = await commitRes.text().catch(() => `HTTP ${commitRes.status}`);
+        throw new Error(`Unable to read base commit ${headSha}: ${errText}`);
+      }
+      const commitData = (await commitRes.json()) as { tree?: { sha?: string } };
+      const baseTreeSha = commitData?.tree?.sha;
+      if (!baseTreeSha) {
+        throw new Error(`Base commit ${headSha} did not include a tree SHA.`);
+      }
+
+      // Upload blobs with bounded concurrency
+      this.deployJob.stage = 'uploading';
+      this.deployJob.percent = 35;
+      const cleanPrefix = basePath.replace(/^\/+|\/+$/g, '');
+      const treeEntries: Array<{ path: string; mode: '100644'; type: 'blob'; sha: string }> = new Array(relFiles.length);
+      let cursor = 0;
+      let uploaded = 0;
+      const concurrency = Math.min(6, relFiles.length);
+
+      const uploadWorker = async () => {
+        while (true) {
+          const idx = cursor;
+          cursor += 1;
+          if (idx >= relFiles.length) break;
+          const relPath = relFiles[idx];
+          const fullPath = path.join(outputDir, relPath);
+          const contentBase64 = fs.readFileSync(fullPath).toString('base64');
+          const blobRes = await fetch(`${repoBase}/git/blobs`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              content: contentBase64,
+              encoding: 'base64',
+            }),
+            signal: AbortSignal.timeout(30000),
+          });
+          if (!blobRes.ok) {
+            const errText = await blobRes.text().catch(() => `HTTP ${blobRes.status}`);
+            throw new Error(`Git blob upload failed for '${relPath}' (HTTP ${blobRes.status}): ${errText}`);
+          }
+          const blobData = (await blobRes.json()) as { sha?: string };
+          if (!blobData.sha) {
+            throw new Error(`Git blob response missing SHA for '${relPath}'.`);
+          }
+          const repoPath = cleanPrefix ? `${cleanPrefix}/${relPath}` : relPath;
+          treeEntries[idx] = {
+            path: repoPath,
+            mode: '100644',
+            type: 'blob',
+            sha: blobData.sha,
+          };
+          uploaded += 1;
+          this.deployJob.deployed_files = uploaded;
+          this.deployJob.percent = Math.min(82, 35 + Math.round((uploaded / relFiles.length) * 47));
+          this.deployJob.message = `Uploading Git blobs (${uploaded}/${relFiles.length})...`;
+        }
+      };
+
+      await Promise.all(Array.from({ length: concurrency }, () => uploadWorker()));
+
+      // Ensure .nojekyll is included so GitHub Pages serves underscore/static assets cleanly
+      if (!treeEntries.some((entry) => entry.path === '.nojekyll')) {
+        const njRes = await fetch(`${repoBase}/git/blobs`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ content: '', encoding: 'utf-8' }),
+          signal: AbortSignal.timeout(15000),
+        });
+        if (njRes.ok) {
+          const njData = (await njRes.json()) as { sha?: string };
+          if (njData.sha) {
+            treeEntries.push({ path: '.nojekyll', mode: '100644', type: 'blob', sha: njData.sha });
+          }
+        }
+      }
+
+      // Create atomic Git tree
+      this.deployJob.stage = 'committing';
+      this.deployJob.percent = 86;
+      this.deployJob.message = `Creating atomic Git tree (${treeEntries.length} entries)...`;
+      const treeRes = await fetch(`${repoBase}/git/trees`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          base_tree: baseTreeSha,
+          tree: treeEntries,
+        }),
+        signal: AbortSignal.timeout(30000),
+      });
+      if (!treeRes.ok) {
+        const errText = await treeRes.text().catch(() => `HTTP ${treeRes.status}`);
+        throw new Error(`Git tree creation failed (HTTP ${treeRes.status}): ${errText}`);
+      }
+      const treeData = (await treeRes.json()) as { sha?: string };
+      if (!treeData.sha) {
+        throw new Error('Git tree creation did not return a tree SHA.');
+      }
+
+      // Create atomic commit
+      this.deployJob.percent = 92;
+      this.deployJob.message = `Creating atomic commit on '${branch}'...`;
+      const newCommitRes = await fetch(`${repoBase}/git/commits`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          message: `Deploy pSEO static bundle (${relFiles.length} files)`,
+          tree: treeData.sha,
+          parents: [headSha],
+        }),
+        signal: AbortSignal.timeout(20000),
+      });
+      if (!newCommitRes.ok) {
+        const errText = await newCommitRes.text().catch(() => `HTTP ${newCommitRes.status}`);
+        throw new Error(`Git commit creation failed (HTTP ${newCommitRes.status}): ${errText}`);
+      }
+      const newCommitData = (await newCommitRes.json()) as { sha?: string };
+      if (!newCommitData.sha) {
+        throw new Error('Git commit creation did not return a commit SHA.');
+      }
+
+      // Fast-forward branch ref
+      this.deployJob.stage = 'finalizing';
+      this.deployJob.percent = 96;
+      this.deployJob.message = `Updating refs/heads/${branch} -> ${newCommitData.sha.slice(0, 7)}...`;
+      const patchRes = await fetch(`${repoBase}/git/refs/heads/${encodedBranch}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({
+          sha: newCommitData.sha,
+          force: false,
+        }),
+        signal: AbortSignal.timeout(20000),
+      });
+      if (!patchRes.ok) {
+        const errText = await patchRes.text().catch(() => `HTTP ${patchRes.status}`);
+        throw new Error(`Failed to update refs/heads/${branch} (HTTP ${patchRes.status}): ${errText}`);
+      }
+
+      const duration = Number(((Date.now() - startedAtMs) / 1000).toFixed(2));
+      this.deployJob.status = 'success';
+      this.deployJob.stage = 'done';
+      this.deployJob.percent = 100;
+      this.deployJob.completed_at = new Date().toISOString();
+      this.deployJob.duration = duration;
+      this.deployJob.total_files = relFiles.length;
+      this.deployJob.deployed_files = relFiles.length;
+      this.deployJob.files_count = relFiles.length;
+      this.deployJob.commit_sha = newCommitData.sha;
+      this.deployJob.live_url = liveUrl;
+      this.deployJob.message = `Atomic commit ${newCommitData.sha.slice(0, 7)} pushed ${relFiles.length} files to ${owner}/${repo}@${branch} in ${duration}s.`;
+      this.log(`[GITHUB] ${this.deployJob.message} (${liveUrl})`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.deployJob.status = 'failed';
+      this.deployJob.stage = 'error';
+      this.deployJob.completed_at = new Date().toISOString();
+      this.deployJob.duration = Number(((Date.now() - startedAtMs) / 1000).toFixed(2));
+      this.deployJob.error = msg;
+      this.deployJob.errors = [msg];
+      this.deployJob.message = msg;
+      this.log(`[GITHUB ERROR] ${msg}`);
+    }
+  }
+
   startGitHubDeploy(opts: { dryRun?: boolean; projectName?: string }): Record<string, unknown> {
     const dryRun = Boolean(opts.dryRun);
-    const { token } = this.resolveOutputDir('github', undefined, opts.projectName);
+    const startedAtMs = Date.now();
+    const { token, outputDir } = this.resolveOutputDir('github', undefined, opts.projectName);
+    const owner = (this.config.github.owner || '').trim();
+    const repo = (this.config.github.repo || '').trim();
+    const branch = (this.config.github.branch || 'main').trim();
+    const basePath = (this.config.github.base_path || '').trim();
+    const liveUrl = repo.toLowerCase().endsWith('.github.io')
+      ? `https://${repo}`
+      : owner && repo
+        ? `https://${owner}.github.io/${repo}`
+        : owner
+          ? `https://${owner}.github.io`
+          : '';
+
     this.deployJob = {
       ...this.createIdleDeployJob(),
       status: 'in_progress',
@@ -2475,6 +2762,7 @@ export class DashboardStore {
       message: `Preparing GitHub Pages bundle for '${token}'...`,
       target: 'GitHub Pages',
       subdomain: token,
+      live_url: liveUrl,
       started_at: new Date().toISOString(),
     };
 
@@ -2485,47 +2773,64 @@ export class DashboardStore {
     });
     const filesCount = Number(buildRes.files_count || 0);
 
-    setTimeout(() => {
-      if (dryRun) {
+    if (dryRun) {
+      setTimeout(() => {
+        const duration = Number(((Date.now() - startedAtMs) / 1000).toFixed(2));
         this.deployJob.status = 'success';
         this.deployJob.stage = 'done';
         this.deployJob.percent = 100;
         this.deployJob.completed_at = new Date().toISOString();
+        this.deployJob.duration = duration;
         this.deployJob.total_files = filesCount;
         this.deployJob.deployed_files = filesCount;
         this.deployJob.files_count = filesCount;
         this.deployJob.commit_sha = 'c0ffee' + '0'.repeat(34);
-        this.deployJob.message = `[DRY-RUN] Simulated Git tree with ${filesCount} files on branch '${this.config.github.branch}'.`;
-        this.log(this.deployJob.message);
-        return;
-      }
+        this.deployJob.live_url = liveUrl;
+        this.deployJob.message = `[DRY-RUN] Simulated atomic Git tree with ${filesCount} files on branch '${branch}'.`;
+        this.log(`[GITHUB] ${this.deployJob.message}`);
+      }, 300);
 
-      if (!this.getEffectiveGitHubToken() || !this.config.github.owner || !this.config.github.repo) {
-        const err = 'GitHub token, owner, and repo must be configured before live deployment (or enable Dry Run).';
-        this.deployJob.status = 'failed';
-        this.deployJob.completed_at = new Date().toISOString();
-        this.deployJob.error = err;
-        this.deployJob.errors = [err];
-        this.deployJob.message = err;
-        this.log(`[GITHUB ERROR] ${err}`);
-        return;
-      }
+      return {
+        success: true,
+        message: 'GitHub dry-run simulation started in background.',
+        dry_run: true,
+        job: this.deployJob,
+      };
+    }
 
-      this.deployJob.status = 'success';
-      this.deployJob.stage = 'done';
-      this.deployJob.percent = 100;
+    const ghToken = this.getEffectiveGitHubToken();
+    if (!ghToken || !owner || !repo) {
+      const err = 'GitHub token, owner, and repo must be configured before live deployment (or enable Dry Run).';
+      this.deployJob.status = 'failed';
+      this.deployJob.stage = 'error';
       this.deployJob.completed_at = new Date().toISOString();
-      this.deployJob.total_files = filesCount;
-      this.deployJob.deployed_files = filesCount;
-      this.deployJob.files_count = filesCount;
-      this.deployJob.message = `Prepared ${filesCount} static files for ${this.config.github.owner}/${this.config.github.repo}.`;
-      this.log(`[GITHUB] ${this.deployJob.message}`);
-    }, 350);
+      this.deployJob.error = err;
+      this.deployJob.errors = [err];
+      this.deployJob.message = err;
+      this.log(`[GITHUB ERROR] ${err}`);
+      return {
+        success: false,
+        error: err,
+        dry_run: false,
+        job: this.deployJob,
+      };
+    }
+
+    void this.executeGitHubGitDataDeploy({
+      outputDir,
+      owner,
+      repo,
+      branch,
+      basePath,
+      token: ghToken,
+      liveUrl,
+      startedAtMs,
+    });
 
     return {
       success: true,
-      message: 'Deployment job started in background.',
-      dry_run: dryRun,
+      message: `Atomic GitHub Git Data API deployment started for ${owner}/${repo}@${branch}.`,
+      dry_run: false,
       job: this.deployJob,
     };
   }
