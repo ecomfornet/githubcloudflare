@@ -21,9 +21,9 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Playfair+Display:ital,wght@0,600;0,700;1,600&display=swap" rel="stylesheet">
   
-  <link rel="stylesheet" href="style.css?v=3.2">
+  <link rel="stylesheet" href="style.css?v=3.3">
 </head>
-<body>
+<body class="auth-locked">
 
   <!-- Consolidated 2-Row Sticky Command Bar (Zero Vertical Waste) -->
   <header class="app-header compact-command-bar">
@@ -52,10 +52,20 @@
         </button>
       </div>
 
-      <!-- Settings in Top-Right (Decluttered: Settings Only) -->
+      <!-- User Space Badge, System Admin & Settings Controls -->
       <div class="header-meta">
+        <div id="currentUserBadge" class="user-space-pill" style="display: none;" title="Your isolated workspace account">
+          <span class="user-role-tag" id="currentUserRoleTag">SPACE</span>
+          <span class="user-name-label" id="currentUserNameLabel">—</span>
+        </div>
+        <button type="button" id="btnOpenAdminConsole" class="btn btn-admin btn-sm" style="display: none;" title="Open System Admin Console to manage users and separated spaces">
+          <span>🛡️ Admin</span>
+        </button>
         <button type="button" id="btnOpenSettings" class="btn btn-primary btn-sm" title="Open Cloudflare &amp; GitHub Platform Settings" style="display: inline-flex; align-items: center; gap: 0.35rem; font-weight: 600;">
           <span>⚙️ Settings</span>
+        </button>
+        <button type="button" id="btnSignOut" class="btn btn-secondary btn-sm" style="display: none;" title="Sign out of your workspace">
+          <span>Sign Out</span>
         </button>
       </div>
     </div>
@@ -89,6 +99,20 @@
       </div>
     </div>
   </header>
+
+  <!-- System Admin Space-Inspection Banner (Visible only when Admin enters another user's isolated space) -->
+  <div id="adminSpaceBanner" class="admin-space-banner" style="display: none;" role="status" aria-live="polite">
+    <div class="admin-space-banner-inner">
+      <div class="admin-space-banner-info">
+        <span class="admin-space-dot"></span>
+        <span>Inspecting separated space of <strong id="adminViewingOwnerName">—</strong> <code id="adminViewingSpaceId">—</code></span>
+      </div>
+      <div class="admin-space-banner-actions">
+        <button type="button" id="btnOpenAdminFromBanner" class="btn btn-secondary btn-xs">🛡️ Admin Console</button>
+        <button type="button" id="btnReturnOwnSpace" class="btn btn-primary btn-xs">← Return to My Space</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Interactive Compact Stepper Bar -->
   <section class="stepper-section compact-stepper" aria-label="Pipeline Stepper">
@@ -1819,10 +1843,261 @@
     </div>
   </div>
 
+  <!-- ================================================================= -->
+  <!-- FULL-SCREEN AUTH GATE (FIRST-RUN ADMIN SETUP / SIGN IN / SIGN UP) -->
+  <!-- ================================================================= -->
+  <div id="authGateOverlay" class="auth-gate-overlay" role="dialog" aria-modal="true" aria-labelledby="authGateTitle">
+    <div class="auth-gate-card">
+      <div class="auth-gate-brand">
+        <div class="brand-logo auth-brand-logo">S</div>
+        <div>
+          <div class="auth-brand-name">stylesdays <span class="brand-sub">pSEO Multi-Cloud Hub</span></div>
+          <div class="auth-brand-caption" id="authGateSubtitle">Isolated multi-user pSEO workspaces · JSON-backed auth</div>
+        </div>
+      </div>
+
+      <!-- Mode Tabs (Hidden during First-Run System Admin Setup) -->
+      <div id="authModeTabs" class="auth-mode-tabs" style="display: none;" role="tablist">
+        <button type="button" id="authTabLoginBtn" class="auth-mode-tab active" role="tab" aria-selected="true">Sign In</button>
+        <button type="button" id="authTabRegisterBtn" class="auth-mode-tab" role="tab" aria-selected="false">Create Space</button>
+      </div>
+
+      <!-- Feedback Banner -->
+      <div id="authFeedbackBox" class="auth-feedback-box" style="display: none;" role="alert"></div>
+
+      <!-- Form 1: First-Run System Admin Setup -->
+      <form id="authSetupAdminForm" class="auth-form" style="display: none;" autocomplete="off">
+        <div class="auth-setup-banner">
+          <div class="auth-setup-title" id="authGateTitle">Initialize System Admin</div>
+          <p class="auth-setup-desc">Create the primary System Admin account to unlock this hub. Once claimed, you can manage users, toggle self-registration, and inspect any user's separated space.</p>
+        </div>
+
+        <div class="auth-grid-2">
+          <div class="form-group compact-group">
+            <label class="form-label" for="setupAdminUsername">Admin Username</label>
+            <input type="text" id="setupAdminUsername" class="form-control" placeholder="admin" required minlength="3" maxlength="32">
+          </div>
+          <div class="form-group compact-group">
+            <label class="form-label" for="setupAdminDisplayName">Display Name</label>
+            <input type="text" id="setupAdminDisplayName" class="form-control" placeholder="System Admin" maxlength="64">
+          </div>
+        </div>
+
+        <div class="form-group compact-group">
+          <label class="form-label" for="setupAdminEmail">Admin Email</label>
+          <input type="email" id="setupAdminEmail" class="form-control" placeholder="admin@example.com" required>
+        </div>
+
+        <div class="auth-grid-2">
+          <div class="form-group compact-group">
+            <label class="form-label" for="setupAdminPassword">Password (min 8 chars)</label>
+            <input type="password" id="setupAdminPassword" class="form-control" placeholder="••••••••" required minlength="8">
+          </div>
+          <div class="form-group compact-group">
+            <label class="form-label" for="setupAdminConfirm">Confirm Password</label>
+            <input type="password" id="setupAdminConfirm" class="form-control" placeholder="••••••••" required minlength="8">
+          </div>
+        </div>
+
+        <button type="submit" id="btnSubmitSetupAdmin" class="btn btn-primary btn-lg auth-submit-btn">
+          🛡️ Claim System Admin &amp; Enter Space
+        </button>
+      </form>
+
+      <!-- Form 2: Sign In -->
+      <form id="authLoginForm" class="auth-form" style="display: none;" autocomplete="on">
+        <div class="form-group compact-group">
+          <label class="form-label" for="loginIdentifier">Username or Email</label>
+          <input type="text" id="loginIdentifier" class="form-control" placeholder="username or email@domain.com" required autocomplete="username">
+        </div>
+        <div class="form-group compact-group">
+          <label class="form-label" for="loginPassword">Password</label>
+          <input type="password" id="loginPassword" class="form-control" placeholder="••••••••" required autocomplete="current-password">
+        </div>
+        <button type="submit" id="btnSubmitLogin" class="btn btn-primary btn-lg auth-submit-btn">
+          Sign In to My Space →
+        </button>
+      </form>
+
+      <!-- Form 3: Self-Registration (Create Separated Space) -->
+      <form id="authRegisterForm" class="auth-form" style="display: none;" autocomplete="off">
+        <div class="auth-space-note">
+          Every account gets a <strong>100% separated workspace</strong> with isolated projects, scraped content, assets, tokens, and builds.
+        </div>
+        <div class="auth-grid-2">
+          <div class="form-group compact-group">
+            <label class="form-label" for="regUsername">Username</label>
+            <input type="text" id="regUsername" class="form-control" placeholder="e.g. sarah_studio" required minlength="3" maxlength="32">
+          </div>
+          <div class="form-group compact-group">
+            <label class="form-label" for="regDisplayName">Display Name</label>
+            <input type="text" id="regDisplayName" class="form-control" placeholder="Sarah Studio" maxlength="64">
+          </div>
+        </div>
+        <div class="form-group compact-group">
+          <label class="form-label" for="regEmail">Email Address</label>
+          <input type="email" id="regEmail" class="form-control" placeholder="sarah@example.com" required>
+        </div>
+        <div class="auth-grid-2">
+          <div class="form-group compact-group">
+            <label class="form-label" for="regPassword">Password (min 8 chars)</label>
+            <input type="password" id="regPassword" class="form-control" placeholder="••••••••" required minlength="8">
+          </div>
+          <div class="form-group compact-group">
+            <label class="form-label" for="regConfirm">Confirm Password</label>
+            <input type="password" id="regConfirm" class="form-control" placeholder="••••••••" required minlength="8">
+          </div>
+        </div>
+        <button type="submit" id="btnSubmitRegister" class="btn btn-primary btn-lg auth-submit-btn">
+          ✨ Create Account &amp; Connect Space
+        </button>
+      </form>
+
+      <div id="authSignupDisabledNote" class="auth-disabled-note" style="display: none;">
+        Public registration is currently disabled by the System Admin. Ask your admin to provision a workspace account.
+      </div>
+    </div>
+  </div>
+
+  <!-- ================================================================= -->
+  <!-- SYSTEM ADMIN CONSOLE MODAL (USERS & SEPARATED SPACES MANAGEMENT)  -->
+  <!-- ================================================================= -->
+  <div id="adminConsoleModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="adminConsoleTitle">
+    <div class="modal-content admin-modal-content">
+      <div class="modal-header admin-modal-header">
+        <div>
+          <h2 id="adminConsoleTitle" class="admin-modal-title">🛡️ System Admin Console</h2>
+          <p class="admin-modal-sub">Manage user accounts, role permissions, self-signup policy, and isolated per-user spaces.</p>
+        </div>
+        <button type="button" id="btnCloseAdminConsole" class="modal-close" aria-label="Close Admin Console">&times;</button>
+      </div>
+
+      <div class="admin-modal-body">
+        <!-- Top Metrics & Policy Strip -->
+        <div class="admin-metrics-strip">
+          <div class="admin-metric-card">
+            <span class="admin-metric-label">Total Users</span>
+            <strong id="adminMetricTotalUsers" class="admin-metric-value">0</strong>
+          </div>
+          <div class="admin-metric-card">
+            <span class="admin-metric-label">Active Admins</span>
+            <strong id="adminMetricActiveAdmins" class="admin-metric-value" style="color: #38BDF8;">0</strong>
+          </div>
+          <div class="admin-metric-card">
+            <span class="admin-metric-label">Separated Spaces</span>
+            <strong id="adminMetricTotalSpaces" class="admin-metric-value" style="color: #34D399;">0</strong>
+          </div>
+          <div class="admin-metric-card admin-policy-card">
+            <label class="checkbox-label" for="adminToggleSelfSignup" style="cursor: pointer; margin: 0;">
+              <input type="checkbox" id="adminToggleSelfSignup" checked>
+              <div>
+                <strong style="font-size: 0.78rem; color: #F8FAFC;">Allow User Self-Signup</strong>
+                <div class="checkbox-hint">Let new users register and create their own separated space</div>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <!-- Toolbar + Create User Toggle -->
+        <div class="admin-section-bar">
+          <span class="tag-badge" style="background: rgba(56, 189, 248, 0.15); color: #38BDF8; border: 1px solid rgba(56, 189, 248, 0.3);">
+            USER ACCOUNTS &amp; SEPARATED SPACES
+          </span>
+          <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <button type="button" id="btnAdminRefreshUsers" class="btn btn-secondary btn-xs">🔄 Refresh</button>
+            <button type="button" id="btnToggleAdminCreateForm" class="btn btn-primary btn-xs">+ Provision New User</button>
+          </div>
+        </div>
+
+        <!-- Inline Provision New User Form (Collapsed by default) -->
+        <form id="adminCreateUserForm" class="admin-inline-panel" style="display: none;" autocomplete="off">
+          <div class="admin-inline-panel-title">Provision New User &amp; Separated Space</div>
+          <div class="admin-create-grid">
+            <div class="form-group compact-group">
+              <label class="form-label" for="adminNewUsername">Username</label>
+              <input type="text" id="adminNewUsername" class="form-control" placeholder="client_name" required minlength="3" maxlength="32">
+            </div>
+            <div class="form-group compact-group">
+              <label class="form-label" for="adminNewEmail">Email</label>
+              <input type="email" id="adminNewEmail" class="form-control" placeholder="client@example.com" required>
+            </div>
+            <div class="form-group compact-group">
+              <label class="form-label" for="adminNewDisplayName">Display Name</label>
+              <input type="text" id="adminNewDisplayName" class="form-control" placeholder="Client Studio" maxlength="64">
+            </div>
+            <div class="form-group compact-group">
+              <label class="form-label" for="adminNewPassword">Temp Password (min 8)</label>
+              <input type="password" id="adminNewPassword" class="form-control" placeholder="••••••••" required minlength="8">
+            </div>
+            <div class="form-group compact-group">
+              <label class="form-label" for="adminNewRole">Role</label>
+              <select id="adminNewRole" class="form-control">
+                <option value="user">User (Own Space Only)</option>
+                <option value="admin">System Admin</option>
+              </select>
+            </div>
+          </div>
+          <div class="admin-inline-panel-actions">
+            <button type="button" id="btnCancelAdminCreate" class="btn btn-secondary btn-xs">Cancel</button>
+            <button type="submit" id="btnSubmitAdminCreate" class="btn btn-primary btn-xs">✓ Create User &amp; Space</button>
+          </div>
+        </form>
+
+        <!-- Inline Reset Password Bar (Revealed when clicking Reset Password on a user row) -->
+        <form id="adminResetPasswordForm" class="admin-inline-panel admin-warn-panel" style="display: none;" autocomplete="off">
+          <input type="hidden" id="adminResetUserId">
+          <div class="admin-inline-panel-title">Reset Password for <strong id="adminResetUserLabel">—</strong></div>
+          <div style="display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap;">
+            <input type="password" id="adminResetNewPassword" class="form-control" style="max-width: 280px;" placeholder="New password (min 8 chars)" required minlength="8">
+            <button type="submit" class="btn btn-primary btn-xs">Update Password</button>
+            <button type="button" id="btnCancelAdminReset" class="btn btn-secondary btn-xs">Cancel</button>
+          </div>
+        </form>
+
+        <!-- Inline Delete User Confirmation Bar (Replaces window.confirm) -->
+        <div id="adminDeleteConfirmBar" class="admin-inline-panel admin-danger-panel" style="display: none;">
+          <input type="hidden" id="adminDeleteUserId">
+          <div class="admin-inline-panel-title">Delete user <strong id="adminDeleteUserLabel">—</strong> and purge their separated space?</div>
+          <div style="font-size: 0.75rem; color: #FECACA; margin-bottom: 0.55rem;">
+            This revokes active sessions and permanently removes all projects, posts, and assets in their workspace directory.
+          </div>
+          <div class="admin-inline-panel-actions">
+            <button type="button" id="btnCancelAdminDelete" class="btn btn-secondary btn-xs">Cancel</button>
+            <button type="button" id="btnConfirmAdminDelete" class="btn btn-danger btn-xs">🗑️ Confirm Delete &amp; Purge Space</button>
+          </div>
+        </div>
+
+        <!-- Admin Feedback Box -->
+        <div id="adminConsoleFeedback" class="auth-feedback-box" style="display: none;"></div>
+
+        <!-- Users & Separated Spaces Table -->
+        <div class="table-container admin-table-wrap">
+          <table class="data-table admin-users-table">
+            <thead>
+              <tr>
+                <th>User &amp; Email</th>
+                <th>Role</th>
+                <th>Status</th>
+                <th>Separated Space</th>
+                <th>Last Login</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="adminUsersTableBody">
+              <tr>
+                <td colspan="6" style="text-align: center; padding: 1.5rem; color: #94A3B8;">Loading users...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast Notification Container -->
   <div id="toastContainer" class="toast-container"></div>
 
   <script src="cropper.js?v=1.0"></script>
-  <script src="app.js?v=3.5"></script>
+  <script src="app.js?v=3.6"></script>
 </body>
 </html>

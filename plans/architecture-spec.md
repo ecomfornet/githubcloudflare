@@ -63,3 +63,19 @@
   - Dedicated GitHub build progress container (`#ghBuildProgressBarContainer`) and live GitHub deploy polling progress/error handling (`status === 'error' || status === 'failed'`).
   - Unified terminal log buffer (`cachedLogs`) and fixed filter matching (`cloudflare`/`cf`, `github`/`gh`, `build`).
   - Accurate `is_org` detection on Step 1 GitHub repo creation, dynamic `wp_api` source label/placeholder, stale-slug guard in `populatePreviewSelect()`, 404-free Catalog thumbnails, deduplicated Step 1 auto-save listeners, `#ghStatusFeedback` inline status box, and modal Escape/backdrop + file-input reset polish.
+
+## 9. JSON-Backed Multi-User Authentication, System Admin Console & Isolated User Spaces
+- **Zero External Auth Dependencies (`src/auth-store.ts`)**: Pure Node.js (`node:crypto`) user & space management backed by `auth_users.json` (gitignored).
+  - Password hashing uses `crypto.scryptSync` with per-user 16-byte random salts and constant-time `crypto.timingSafeEqual` verification.
+  - Session tokens are HMAC-SHA256 signed `Authorization: Bearer` tokens verified server-side (keyed from `process.env.SESSION_SECRET` with in-memory `crypto.randomBytes(32)` fallback) paired with an in-memory active session registry for instant revocation on logout or suspension.
+  - First-run **System Admin Claim / Setup** flow (`POST /api/auth/setup-admin`) locks permanently once an admin account exists; optional `ADMIN_PASSCODE` environment variable supported server-side.
+  - Self-registration (`POST /api/auth/register`) allows any user to sign up and immediately receive a completely separated workspace (toggleable by System Admin via `allow_self_signup`).
+- **Strict Per-User Workspace Isolation (`src/workspace-pool.ts`, `server.ts`)**:
+  - Each user is assigned an immutable, sanitized `space_id` mapped to `workspaces/<space_id>/` (enforced with `path.resolve` + trailing `path.sep` boundary checks) with its own `DashboardStore` (`pseo_config.json`, `scraped_data/`, `assets/`, `dist/`).
+  - All workspace `/api/*` routes require a verified Bearer token and automatically route to the authenticated user's isolated `DashboardStore`.
+  - Per-space static assets served cleanly at `/spaces/:spaceId/assets/*` with strict directory confinement so previews, thumbnails, and logos remain isolated per user while compiled `dist/` bundles preserve `/assets/images/`.
+- **System Admin Console (`server.ts`, `public/index.html`, `public/app.js`, `public/style.css`)**:
+  - Endpoints: `GET /api/auth/status`, `POST /api/auth/setup-admin`, `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`, `GET /api/admin/users`, `POST /api/admin/users`, `PATCH /api/admin/users/:id`, `DELETE /api/admin/users/:id`, `PATCH /api/admin/settings`.
+  - Admin capabilities: view all user spaces (projects count, posts count, role, status, last login), create users directly, promote/demote roles (`admin` / `user`), suspend/reactivate accounts, reset user passwords, delete users & purge spaces, toggle public registration, and inspect/manage any user's isolated space via admin-only `X-Space-Id` header with a clear return banner.
+  - Frontend holds Bearer token exclusively in JS memory (zero `localStorage` / `sessionStorage` token storage).
+

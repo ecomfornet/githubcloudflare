@@ -69,6 +69,25 @@
 | `public/app.js` | Fixed `gh_owner`/`gh_repo` field mapping, persisted platform per project, full UI/logo/branding/theme/routing/Site Pages/preview reload on `switchProject()` & `handleCreateNewProject()` | Verified (`node --check` + live Chromium E2E) |
 | `src/store.test.ts` | Added Test #20 verifying complete per-project isolation across create, edit, project-scoped logos, switch, clear, and disk reload | 20/20 passing |
 
+## Full-Project End-to-End Hardening Log (Section 8)
+
+| File Path | Key Exports / Changes | Verification Status |
+|---|---|---|
+| `src/store.ts` | Atomic GitHub Git Data API deployment (`startGitHubDeploy` / `executeGitHubGitDataDeploy`), `status=SYNCED\|CUSTOM` filtering, GitHub Pages `baseUrl` in `runBuild`, `wp_api_url` persistence | Verified (21/21 unit tests) |
+| `public/index.html`, `public/app.js` | `#ghBuildProgressBarContainer`, `#ghStatusFeedback`, `cachedTerminalLogs` filtering, `is_org` auto-detection, modal Escape/backdrop close, stale-slug guard in `populatePreviewSelect()` | Verified (`node --check` + Chromium E2E) |
+| `src/store.test.ts` | Added Test #21 verifying GitHub Git Data API deploy, GitHub Pages `baseUrl`, and `SYNCED`/`CUSTOM` filtering | 21/21 passing |
+
+## JSON-Backed Multi-User System Admin & Separated Spaces Log (Section 9)
+
+| File Path | Key Exports / Changes | Verification Status |
+|---|---|---|
+| `plans/architecture-spec.md` | Section 9 blueprint for pure Node.js + JSON multi-user auth, System Admin console, and `workspaces/<spaceId>/` isolation | Approved |
+| `src/auth-store.ts` | `AuthStore`, `AuthError`, `hashPasswordScrypt`, `verifyPasswordScrypt`, `isValidSpaceId` (salted `scrypt`, `timingSafeEqual`, HMAC-SHA256 Bearer tokens, instant session revocation, one-time admin claim, optional `ADMIN_PASSCODE` override) | Verified (`src/auth.test.ts`) |
+| `src/workspace-pool.ts` | `WorkspacePool`, `rewritePreviewAssetsForSpace` (path-confined `workspaces/<spaceId>/` stores, legacy admin seeding, space stats, space purge) | Verified (`src/auth.test.ts`) |
+| `server.ts` | `createApp()`, same-origin CORS, `requireAuth`, `requireAdmin`, `requireWorkspace` (`X-Space-Id` admin inspection, non-admin `403`), `/api/auth/*`, `/api/admin/*`, `/spaces/:spaceId/assets/*` | Verified (`src/auth.test.ts` + Chromium E2E) |
+| `public/index.html`, `public/style.css`, `public/app.js` | Full-screen Auth Gate (First-Run System Admin Claim / Sign In / Create Space), in-memory Bearer token auth, `toSpaceAssetUrl()`, Admin Space-Inspection banner, System Admin Console modal (metrics, self-signup toggle, provision user, role/status/password/delete inline panels, Enter Space), mobile `390x844` responsive header wrap fix | Verified (`node --check` + Desktop & Mobile Chromium E2E) |
+| `src/auth.test.ts` | Unit + live HTTP integration tests covering scrypt, traversal blocking, admin claim lock, space isolation, `403` cross-space guard, admin inspection, instant revocation on suspend, self-signup policy, and space purge | Verified |
+
 
 
 

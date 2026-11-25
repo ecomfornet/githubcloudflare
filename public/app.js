@@ -28,6 +28,14 @@
     themeCustomDraft: { content_blocks: [] },
     themeEditorDebounceTimer: null,
     themeEditorDirty: false,
+    // Multi-user Auth & Separated Space State (strictly in-memory; never localStorage/sessionStorage)
+    authToken: '',
+    currentUser: null,
+    activeSpaceId: '',
+    viewingSpaceOwner: null,
+    authStatus: null,
+    adminUsers: [],
+    adminSettings: { allow_self_signup: true },
   };
 
   const State = state; // Safe alias preventing ReferenceError: State is not defined
@@ -327,6 +335,74 @@
     workspaceCloudflare: document.getElementById('workspaceCloudflare'),
     workspaceGithub: document.getElementById('workspaceGithub'),
     toastContainer: document.getElementById('toastContainer'),
+
+    // Multi-User Auth Gate & Header User Controls
+    currentUserBadge: document.getElementById('currentUserBadge'),
+    currentUserRoleTag: document.getElementById('currentUserRoleTag'),
+    currentUserNameLabel: document.getElementById('currentUserNameLabel'),
+    btnOpenAdminConsole: document.getElementById('btnOpenAdminConsole'),
+    btnSignOut: document.getElementById('btnSignOut'),
+    adminSpaceBanner: document.getElementById('adminSpaceBanner'),
+    adminViewingOwnerName: document.getElementById('adminViewingOwnerName'),
+    adminViewingSpaceId: document.getElementById('adminViewingSpaceId'),
+    btnOpenAdminFromBanner: document.getElementById('btnOpenAdminFromBanner'),
+    btnReturnOwnSpace: document.getElementById('btnReturnOwnSpace'),
+
+    authGateOverlay: document.getElementById('authGateOverlay'),
+    authGateSubtitle: document.getElementById('authGateSubtitle'),
+    authModeTabs: document.getElementById('authModeTabs'),
+    authTabLoginBtn: document.getElementById('authTabLoginBtn'),
+    authTabRegisterBtn: document.getElementById('authTabRegisterBtn'),
+    authFeedbackBox: document.getElementById('authFeedbackBox'),
+    authSetupAdminForm: document.getElementById('authSetupAdminForm'),
+    setupAdminUsername: document.getElementById('setupAdminUsername'),
+    setupAdminDisplayName: document.getElementById('setupAdminDisplayName'),
+    setupAdminEmail: document.getElementById('setupAdminEmail'),
+    setupAdminPassword: document.getElementById('setupAdminPassword'),
+    setupAdminConfirm: document.getElementById('setupAdminConfirm'),
+    btnSubmitSetupAdmin: document.getElementById('btnSubmitSetupAdmin'),
+    authLoginForm: document.getElementById('authLoginForm'),
+    loginIdentifier: document.getElementById('loginIdentifier'),
+    loginPassword: document.getElementById('loginPassword'),
+    btnSubmitLogin: document.getElementById('btnSubmitLogin'),
+    authRegisterForm: document.getElementById('authRegisterForm'),
+    regUsername: document.getElementById('regUsername'),
+    regDisplayName: document.getElementById('regDisplayName'),
+    regEmail: document.getElementById('regEmail'),
+    regPassword: document.getElementById('regPassword'),
+    regConfirm: document.getElementById('regConfirm'),
+    btnSubmitRegister: document.getElementById('btnSubmitRegister'),
+    authSignupDisabledNote: document.getElementById('authSignupDisabledNote'),
+
+    // System Admin Console Modal
+    adminConsoleModal: document.getElementById('adminConsoleModal'),
+    btnCloseAdminConsole: document.getElementById('btnCloseAdminConsole'),
+    adminMetricTotalUsers: document.getElementById('adminMetricTotalUsers'),
+    adminMetricActiveAdmins: document.getElementById('adminMetricActiveAdmins'),
+    adminMetricTotalSpaces: document.getElementById('adminMetricTotalSpaces'),
+    adminToggleSelfSignup: document.getElementById('adminToggleSelfSignup'),
+    btnAdminRefreshUsers: document.getElementById('btnAdminRefreshUsers'),
+    btnToggleAdminCreateForm: document.getElementById('btnToggleAdminCreateForm'),
+    adminCreateUserForm: document.getElementById('adminCreateUserForm'),
+    adminNewUsername: document.getElementById('adminNewUsername'),
+    adminNewEmail: document.getElementById('adminNewEmail'),
+    adminNewDisplayName: document.getElementById('adminNewDisplayName'),
+    adminNewPassword: document.getElementById('adminNewPassword'),
+    adminNewRole: document.getElementById('adminNewRole'),
+    btnCancelAdminCreate: document.getElementById('btnCancelAdminCreate'),
+    btnSubmitAdminCreate: document.getElementById('btnSubmitAdminCreate'),
+    adminResetPasswordForm: document.getElementById('adminResetPasswordForm'),
+    adminResetUserId: document.getElementById('adminResetUserId'),
+    adminResetUserLabel: document.getElementById('adminResetUserLabel'),
+    adminResetNewPassword: document.getElementById('adminResetNewPassword'),
+    btnCancelAdminReset: document.getElementById('btnCancelAdminReset'),
+    adminDeleteConfirmBar: document.getElementById('adminDeleteConfirmBar'),
+    adminDeleteUserId: document.getElementById('adminDeleteUserId'),
+    adminDeleteUserLabel: document.getElementById('adminDeleteUserLabel'),
+    btnCancelAdminDelete: document.getElementById('btnCancelAdminDelete'),
+    btnConfirmAdminDelete: document.getElementById('btnConfirmAdminDelete'),
+    adminConsoleFeedback: document.getElementById('adminConsoleFeedback'),
+    adminUsersTableBody: document.getElementById('adminUsersTableBody'),
   };
 
   // Toast Utilities
@@ -377,12 +453,36 @@
     DOM.terminalBody.scrollTop = DOM.terminalBody.scrollHeight;
   }
 
-  // API Call Wrapper
+  // Scope workspace-local asset paths (/assets/...) to the active isolated user space
+  function toSpaceAssetUrl(url) {
+    if (!url || typeof url !== 'string') return url || '';
+    const trimmed = url.trim();
+    if (!trimmed || !state.activeSpaceId) return trimmed;
+    if (trimmed.startsWith('/assets/')) {
+      return `/spaces/${encodeURIComponent(state.activeSpaceId)}${trimmed}`;
+    }
+    return trimmed;
+  }
+
+  // API Call Wrapper (injects in-memory Bearer token & optional Admin X-Space-Id header)
 
   async function api(endpoint, method = 'GET', data = null) {
+    const headers = { 'Content-Type': 'application/json' };
+    if (state.authToken) {
+      headers['Authorization'] = `Bearer ${state.authToken}`;
+    }
+    if (
+      state.currentUser &&
+      state.currentUser.role === 'admin' &&
+      state.activeSpaceId &&
+      state.activeSpaceId !== state.currentUser.space_id
+    ) {
+      headers['X-Space-Id'] = state.activeSpaceId;
+    }
+
     const opts = {
       method,
-      headers: { 'Content-Type': 'application/json' },
+      headers,
     };
 
     if (data && (method === 'POST' || method === 'PUT' || method === 'DELETE' || method === 'PATCH')) {
@@ -396,6 +496,14 @@
         const errJson = await res.json();
         errText = errJson.error || errText;
       } catch (e) {}
+      const isPublicAuthEndpoint =
+        endpoint.startsWith('/api/auth/login') ||
+        endpoint.startsWith('/api/auth/register') ||
+        endpoint.startsWith('/api/auth/setup-admin') ||
+        endpoint.startsWith('/api/auth/status');
+      if (res.status === 401 && !isPublicAuthEndpoint && state.authToken) {
+        clearSessionToAuthGate('Your session expired or was revoked. Please sign in again.');
+      }
       throw new Error(errText);
     }
     return res.json();
@@ -790,7 +898,6 @@
   }
 
   function initProjectSystem() {
-    loadProjects();
     if (DOM.selectActiveProject) {
       DOM.selectActiveProject.addEventListener('change', (e) => {
         switchProject(e.target.value);
@@ -966,7 +1073,9 @@
 
       </svg>`;
     if (logoPath) {
-      const logoImgHtml = `<img src="${logoPath}?t=${Date.now()}" alt="${escapeHtml(bName)}" style="max-height: 48px; max-width: 100%; object-fit: contain;">`;
+      const resolvedLogoUrl = toSpaceAssetUrl(logoPath);
+      const sep = resolvedLogoUrl.includes('?') ? '&' : '?';
+      const logoImgHtml = `<img src="${escapeHtml(resolvedLogoUrl)}${sep}t=${Date.now()}" alt="${escapeHtml(bName)}" style="max-height: 48px; max-width: 100%; object-fit: contain;">`;
       if (DOM.quickLogoPreviewBox) DOM.quickLogoPreviewBox.innerHTML = logoImgHtml;
       if (DOM.previewLogoBox) DOM.previewLogoBox.innerHTML = logoImgHtml;
       if (DOM.quickBrandNameDisplay) DOM.quickBrandNameDisplay.style.display = 'none';
@@ -1024,8 +1133,12 @@
       const cf = cfg.cloudflare || {};
       if (DOM.cfgCfToken) {
         DOM.cfgCfToken.placeholder = cf.token_masked || 'Bearer Token with Workers Edit permissions';
-        if (cf.has_token && (!DOM.cfgCfToken.value || DOM.cfgCfToken.value.includes('****'))) {
-          DOM.cfgCfToken.value = cf.token_masked || '';
+        if (cf.has_token) {
+          if (!DOM.cfgCfToken.value || DOM.cfgCfToken.value.includes('****')) {
+            DOM.cfgCfToken.value = cf.token_masked || '';
+          }
+        } else {
+          DOM.cfgCfToken.value = '';
         }
         if (DOM.cfTokenStatusBadge) {
           DOM.cfTokenStatusBadge.textContent = cf.has_token ? '● Token Active' : '○ Missing Token';
@@ -1054,6 +1167,15 @@
       // Populate GitHub Settings Inputs
       const gh = cfg.github || {};
       DOM.cfgGithubToken.placeholder = gh.token_masked || 'ghp_xxxxxxxxxxxxxxxxxxxx';
+      if (!gh.has_token) {
+        DOM.cfgGithubToken.value = '';
+      } else if (!DOM.cfgGithubToken.value || DOM.cfgGithubToken.value.includes('****')) {
+        DOM.cfgGithubToken.value = gh.token_masked || '';
+      }
+      if (DOM.tokenStatusBadge) {
+        DOM.tokenStatusBadge.textContent = gh.has_token ? '● Token Active' : '○ Missing Token';
+        DOM.tokenStatusBadge.style.color = gh.has_token ? '#10B981' : '#F59E0B';
+      }
       const projGhOwner = activeProj.gh_owner !== undefined ? activeProj.gh_owner : (activeProj.github_owner !== undefined ? activeProj.github_owner : (gh.owner || ''));
       const projGhRepo = activeProj.gh_repo !== undefined ? activeProj.gh_repo : (activeProj.github_repo !== undefined ? activeProj.github_repo : (gh.repo || ''));
       if (DOM.cfgStep1GithubOwner) DOM.cfgStep1GithubOwner.value = projGhOwner;
@@ -1516,7 +1638,8 @@
       const badgeClass = post.custom_edited ? 'badge-custom' : 'badge-synced';
       const badgeText = post.custom_edited ? 'CUSTOM' : 'SYNCED';
       const fallbackThumb = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='44' height='30'><rect width='44' height='30' fill='%23334155'/></svg>";
-      const thumb = post.local_image_path || post.image_url || fallbackThumb;
+      const rawThumb = post.local_image_path || post.image_url || fallbackThumb;
+      const thumb = toSpaceAssetUrl(rawThumb);
       tr.innerHTML = `
 
         <td><span class="badge ${badgeClass}">${badgeText}</span></td>
@@ -3545,7 +3668,7 @@
         }
       }
       if (!currentLogo && state.config && state.config.branding && state.config.branding.logo_path) {
-        currentLogo = state.config.branding.logo_path;
+        currentLogo = toSpaceAssetUrl(state.config.branding.logo_path);
       }
 
       if (currentLogo) {
@@ -4390,7 +4513,7 @@
               if (cleanUrl) {
                 const img = document.createElement('img');
                 img.className = 'theme-block-thumb';
-                img.src = cleanUrl;
+                img.src = toSpaceAssetUrl(cleanUrl);
                 img.alt = blocks[idx].image_alt || blocks[idx].title || 'Block preview';
                 existingThumb.replaceWith(img);
               } else {
@@ -4990,6 +5113,655 @@
       .replace(/'/g, '&#039;');
   }
 
+  // =========================================================================
+  // MULTI-USER AUTH GATE, SEPARATED SPACES & SYSTEM ADMIN CONSOLE
+  // =========================================================================
+
+  function setAuthFeedback(message, type = 'error') {
+    if (!DOM.authFeedbackBox) return;
+    if (!message) {
+      DOM.authFeedbackBox.style.display = 'none';
+      DOM.authFeedbackBox.textContent = '';
+      DOM.authFeedbackBox.className = 'auth-feedback-box';
+      return;
+    }
+    DOM.authFeedbackBox.textContent = message;
+    DOM.authFeedbackBox.className = `auth-feedback-box ${type}`;
+    DOM.authFeedbackBox.style.display = 'block';
+  }
+
+  function setAdminFeedback(message, type = 'info') {
+    if (!DOM.adminConsoleFeedback) return;
+    if (!message) {
+      DOM.adminConsoleFeedback.style.display = 'none';
+      DOM.adminConsoleFeedback.textContent = '';
+      DOM.adminConsoleFeedback.className = 'auth-feedback-box';
+      return;
+    }
+    DOM.adminConsoleFeedback.textContent = message;
+    DOM.adminConsoleFeedback.className = `auth-feedback-box ${type}`;
+    DOM.adminConsoleFeedback.style.display = 'block';
+  }
+
+  function switchAuthMode(mode) {
+    setAuthFeedback('');
+    if (DOM.authSetupAdminForm) DOM.authSetupAdminForm.style.display = mode === 'setup' ? 'flex' : 'none';
+    if (DOM.authLoginForm) DOM.authLoginForm.style.display = mode === 'login' ? 'flex' : 'none';
+    if (DOM.authRegisterForm) DOM.authRegisterForm.style.display = mode === 'register' ? 'flex' : 'none';
+
+    if (DOM.authTabLoginBtn) {
+      DOM.authTabLoginBtn.classList.toggle('active', mode === 'login');
+      DOM.authTabLoginBtn.setAttribute('aria-selected', mode === 'login' ? 'true' : 'false');
+    }
+    if (DOM.authTabRegisterBtn) {
+      DOM.authTabRegisterBtn.classList.toggle('active', mode === 'register');
+      DOM.authTabRegisterBtn.setAttribute('aria-selected', mode === 'register' ? 'true' : 'false');
+    }
+  }
+
+  function updateHeaderAuthControls() {
+    const user = state.currentUser;
+    if (!user) {
+      if (DOM.currentUserBadge) DOM.currentUserBadge.style.display = 'none';
+      if (DOM.btnOpenAdminConsole) DOM.btnOpenAdminConsole.style.display = 'none';
+      if (DOM.btnSignOut) DOM.btnSignOut.style.display = 'none';
+      if (DOM.adminSpaceBanner) DOM.adminSpaceBanner.style.display = 'none';
+      return;
+    }
+
+    if (DOM.currentUserBadge) {
+      DOM.currentUserBadge.style.display = 'inline-flex';
+      DOM.currentUserBadge.title = `${user.display_name} (@${user.username}) · Space ${user.space_id}`;
+    }
+    if (DOM.currentUserRoleTag) {
+      DOM.currentUserRoleTag.textContent = user.role === 'admin' ? 'ADMIN' : 'SPACE';
+      DOM.currentUserRoleTag.classList.toggle('role-admin', user.role === 'admin');
+    }
+    if (DOM.currentUserNameLabel) {
+      DOM.currentUserNameLabel.textContent = user.display_name || user.username;
+    }
+    if (DOM.btnOpenAdminConsole) {
+      DOM.btnOpenAdminConsole.style.display = user.role === 'admin' ? 'inline-flex' : 'none';
+    }
+    if (DOM.btnSignOut) {
+      DOM.btnSignOut.style.display = 'inline-flex';
+    }
+
+    const isInspectingOther =
+      user.role === 'admin' &&
+      state.activeSpaceId &&
+      state.activeSpaceId !== user.space_id &&
+      state.viewingSpaceOwner;
+
+    if (DOM.adminSpaceBanner) {
+      if (isInspectingOther) {
+        DOM.adminSpaceBanner.style.display = 'block';
+        if (DOM.adminViewingOwnerName) {
+          DOM.adminViewingOwnerName.textContent = `${state.viewingSpaceOwner.display_name} (@${state.viewingSpaceOwner.username})`;
+        }
+        if (DOM.adminViewingSpaceId) {
+          DOM.adminViewingSpaceId.textContent = state.activeSpaceId;
+        }
+      } else {
+        DOM.adminSpaceBanner.style.display = 'none';
+      }
+    }
+  }
+
+  function clearSessionToAuthGate(reasonMessage = '') {
+    state.authToken = '';
+    state.currentUser = null;
+    state.activeSpaceId = '';
+    state.viewingSpaceOwner = null;
+    state.projects = [];
+    state.posts = [];
+    state.allCategories = [];
+    state.allCategoriesProject = null;
+    state.selectedPostSlug = null;
+    state.config = {};
+    state.status = {};
+
+    if (state.ingestPollInterval) {
+      clearInterval(state.ingestPollInterval);
+      state.ingestPollInterval = null;
+    }
+    if (state.deployPollInterval) {
+      clearInterval(state.deployPollInterval);
+      state.deployPollInterval = null;
+    }
+    state.isIngesting = false;
+    state.isDeploying = false;
+
+    closeAdminConsole();
+    if (DOM.platformSettingsModal) DOM.platformSettingsModal.classList.remove('active');
+    if (DOM.modalNewProject) DOM.modalNewProject.style.display = 'none';
+    cachedTerminalLogs = ['[INFO] Signed out. Waiting for authentication.'];
+    if (DOM.terminalBody) {
+      DOM.terminalBody.innerHTML = '<div class="log-info">[INFO] Signed out. Waiting for authentication.</div>';
+    }
+
+    updateHeaderAuthControls();
+    document.body.classList.add('auth-locked');
+    if (DOM.authGateOverlay) DOM.authGateOverlay.style.display = 'flex';
+    bootAuthGate(reasonMessage);
+  }
+
+  async function hydrateAuthenticatedWorkspace() {
+    state.projects = [];
+    state.posts = [];
+    state.allCategories = [];
+    state.allCategoriesProject = null;
+    state.selectedPostSlug = null;
+    if (DOM.previewIframe) DOM.previewIframe.srcdoc = '';
+    if (DOM.diffResultsBox) DOM.diffResultsBox.style.display = 'none';
+    if (DOM.scanResultBanner) DOM.scanResultBanner.style.display = 'none';
+    const spaceLogLine = state.activeSpaceId
+      ? `[SPACE] Connected to isolated workspace ${state.activeSpaceId}.`
+      : '[INFO] Multi-Cloud Deployment Dashboard ready. Logs stream live.';
+    cachedTerminalLogs = [spaceLogLine];
+    if (DOM.terminalBody) {
+      DOM.terminalBody.innerHTML = `<div class="log-info">${escapeHtml(spaceLogLine)}</div>`;
+    }
+
+    await loadProjects();
+    await refreshSystem();
+    if (typeof refreshStaticPages === 'function') {
+      try {
+        await refreshStaticPages();
+      } catch (e) {}
+    }
+  }
+
+  async function onAuthenticated(payload, welcomeMsg) {
+    state.authToken = payload.token || '';
+    state.currentUser = payload.user || null;
+    state.activeSpaceId = payload.active_space_id || (payload.user ? payload.user.space_id : '');
+    state.viewingSpaceOwner = null;
+    if (payload.settings) {
+      state.adminSettings = payload.settings;
+    }
+
+    // Wipe sensitive inputs from auth forms
+    if (DOM.setupAdminPassword) DOM.setupAdminPassword.value = '';
+    if (DOM.setupAdminConfirm) DOM.setupAdminConfirm.value = '';
+    if (DOM.loginPassword) DOM.loginPassword.value = '';
+    if (DOM.regPassword) DOM.regPassword.value = '';
+    if (DOM.regConfirm) DOM.regConfirm.value = '';
+    setAuthFeedback('');
+
+    document.body.classList.remove('auth-locked');
+    if (DOM.authGateOverlay) DOM.authGateOverlay.style.display = 'none';
+    updateHeaderAuthControls();
+
+    if (welcomeMsg) {
+      showToast(welcomeMsg, 'success');
+    }
+
+    switchTab('tab-ingest');
+    await hydrateAuthenticatedWorkspace();
+  }
+
+  async function bootAuthGate(initialNotice = '') {
+    document.body.classList.add('auth-locked');
+    if (DOM.authGateOverlay) DOM.authGateOverlay.style.display = 'flex';
+    setAuthFeedback(initialNotice, initialNotice ? 'info' : 'error');
+
+    try {
+      const status = await api('/api/auth/status');
+      state.authStatus = status;
+
+      if (status.needs_admin_setup) {
+        if (DOM.authModeTabs) DOM.authModeTabs.style.display = 'none';
+        if (DOM.authSignupDisabledNote) DOM.authSignupDisabledNote.style.display = 'none';
+        if (DOM.authGateSubtitle) {
+          DOM.authGateSubtitle.textContent = 'First-run setup · Claim the System Admin account';
+        }
+        switchAuthMode('setup');
+      } else {
+        const allowSignup = status.allow_self_signup !== false;
+        if (DOM.authModeTabs) DOM.authModeTabs.style.display = allowSignup ? 'grid' : 'none';
+        if (DOM.authTabRegisterBtn) DOM.authTabRegisterBtn.style.display = allowSignup ? '' : 'none';
+        if (DOM.authSignupDisabledNote) DOM.authSignupDisabledNote.style.display = allowSignup ? 'none' : 'block';
+        if (DOM.authGateSubtitle) {
+          DOM.authGateSubtitle.textContent = allowSignup
+            ? 'Sign in or create a separated workspace space'
+            : 'Sign in to your isolated workspace space';
+        }
+        switchAuthMode('login');
+      }
+      if (initialNotice) setAuthFeedback(initialNotice, 'info');
+    } catch (err) {
+      setAuthFeedback(`Unable to reach authentication server: ${err.message}`, 'error');
+    }
+  }
+
+  function openAdminConsole() {
+    if (!state.currentUser || state.currentUser.role !== 'admin') return;
+    if (!DOM.adminConsoleModal) return;
+    setAdminFeedback('');
+    hideAdminInlinePanels();
+    DOM.adminConsoleModal.classList.add('active');
+    refreshAdminUsers();
+  }
+
+  function closeAdminConsole() {
+    if (!DOM.adminConsoleModal) return;
+    DOM.adminConsoleModal.classList.remove('active');
+    hideAdminInlinePanels();
+    setAdminFeedback('');
+  }
+
+  function hideAdminInlinePanels() {
+    if (DOM.adminCreateUserForm) DOM.adminCreateUserForm.style.display = 'none';
+    if (DOM.adminResetPasswordForm) DOM.adminResetPasswordForm.style.display = 'none';
+    if (DOM.adminDeleteConfirmBar) DOM.adminDeleteConfirmBar.style.display = 'none';
+  }
+
+  async function refreshAdminUsers() {
+    if (!state.currentUser || state.currentUser.role !== 'admin') return;
+    try {
+      const res = await api('/api/admin/users');
+      state.adminUsers = Array.isArray(res.users) ? res.users : [];
+      if (res.settings) state.adminSettings = res.settings;
+
+      const totalUsers = state.adminUsers.length;
+      const activeAdmins = state.adminUsers.filter((u) => u.role === 'admin' && u.status === 'active').length;
+      if (DOM.adminMetricTotalUsers) DOM.adminMetricTotalUsers.textContent = String(totalUsers);
+      if (DOM.adminMetricActiveAdmins) DOM.adminMetricActiveAdmins.textContent = String(activeAdmins);
+      if (DOM.adminMetricTotalSpaces) DOM.adminMetricTotalSpaces.textContent = String(totalUsers);
+      if (DOM.adminToggleSelfSignup) {
+        DOM.adminToggleSelfSignup.checked = state.adminSettings.allow_self_signup !== false;
+      }
+
+      renderAdminUsersTable();
+    } catch (err) {
+      setAdminFeedback(`Failed to load users: ${err.message}`, 'error');
+    }
+  }
+
+  function renderAdminUsersTable() {
+    if (!DOM.adminUsersTableBody) return;
+    DOM.adminUsersTableBody.innerHTML = '';
+
+    if (!state.adminUsers.length) {
+      DOM.adminUsersTableBody.innerHTML =
+        '<tr><td colspan="6" style="text-align: center; padding: 1.5rem; color: #94A3B8;">No user accounts found.</td></tr>';
+      return;
+    }
+
+    state.adminUsers.forEach((u) => {
+      const isSelf = state.currentUser && u.id === state.currentUser.id;
+      const isCurrentSpace = state.activeSpaceId === u.space_id;
+      const stats = u.space_stats || { projects_count: 0, posts_count: 0, active_theme: '—' };
+      const postsCount = stats.posts_count !== undefined ? stats.posts_count : (stats.total_posts || 0);
+      const lastLogin = u.last_login_at ? u.last_login_at.slice(0, 16).replace('T', ' ') : 'Never';
+      const roleBadge =
+        u.role === 'admin'
+          ? '<span class="user-role-tag role-admin">ADMIN</span>'
+          : '<span class="user-role-tag">USER</span>';
+      const statusBadge =
+        u.status === 'active'
+          ? '<span class="badge badge-synced">ACTIVE</span>'
+          : '<span class="badge" style="background: rgba(239, 68, 68, 0.2); color: #FCA5A5; border: 1px solid rgba(239, 68, 68, 0.35);">SUSPENDED</span>';
+
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>
+          <div style="font-weight: 700; color: #F8FAFC;">${escapeHtml(u.display_name || u.username)} ${isSelf ? '<span style="font-size:0.65rem;color:#38BDF8;">(You)</span>' : ''}</div>
+          <div style="font-size: 0.7rem; color: #94A3B8; font-family: var(--font-mono);">@${escapeHtml(u.username)} · ${escapeHtml(u.email)}</div>
+        </td>
+        <td>${roleBadge}</td>
+        <td>${statusBadge}</td>
+        <td>
+          <div class="admin-space-meta">
+            <div><code>${escapeHtml(u.space_id)}</code></div>
+            <div>${stats.projects_count || 0} proj · ${postsCount} posts · ${escapeHtml(stats.active_theme || '—')}</div>
+          </div>
+        </td>
+        <td style="font-size: 0.72rem; color: #94A3B8; white-space: nowrap;">${escapeHtml(lastLogin)}</td>
+        <td>
+          <div class="admin-row-actions">
+            ${
+              isCurrentSpace
+                ? '<span class="badge badge-synced" style="font-size:0.66rem;">● Active Space</span>'
+                : `<button type="button" class="btn btn-primary btn-xs admin-enter-space-btn" data-uid="${escapeHtml(u.id)}">🚀 Enter Space</button>`
+            }
+            ${
+              !isSelf
+                ? `<button type="button" class="btn btn-secondary btn-xs admin-role-btn" data-uid="${escapeHtml(u.id)}">${u.role === 'admin' ? 'Set User' : 'Make Admin'}</button>`
+                : ''
+            }
+            ${
+              !isSelf
+                ? `<button type="button" class="btn btn-secondary btn-xs admin-status-btn" data-uid="${escapeHtml(u.id)}">${u.status === 'active' ? 'Suspend' : 'Activate'}</button>`
+                : ''
+            }
+            <button type="button" class="btn btn-secondary btn-xs admin-reset-pw-btn" data-uid="${escapeHtml(u.id)}">🔑 Reset PW</button>
+            ${
+              !isSelf
+                ? `<button type="button" class="btn btn-danger-outline btn-xs admin-delete-btn" data-uid="${escapeHtml(u.id)}">🗑️</button>`
+                : ''
+            }
+          </div>
+        </td>
+      `;
+
+      const enterBtn = tr.querySelector('.admin-enter-space-btn');
+      if (enterBtn) {
+        enterBtn.addEventListener('click', () => enterUserSpace(u));
+      }
+
+      const roleBtn = tr.querySelector('.admin-role-btn');
+      if (roleBtn) {
+        roleBtn.addEventListener('click', async () => {
+          const nextRole = u.role === 'admin' ? 'user' : 'admin';
+          try {
+            await api(`/api/admin/users/${encodeURIComponent(u.id)}`, 'PATCH', { role: nextRole });
+            setAdminFeedback(`Updated @${u.username} role to ${nextRole.toUpperCase()}.`, 'success');
+            await refreshAdminUsers();
+          } catch (err) {
+            setAdminFeedback(err.message, 'error');
+          }
+        });
+      }
+
+      const statusBtn = tr.querySelector('.admin-status-btn');
+      if (statusBtn) {
+        statusBtn.addEventListener('click', async () => {
+          const nextStatus = u.status === 'active' ? 'suspended' : 'active';
+          try {
+            await api(`/api/admin/users/${encodeURIComponent(u.id)}`, 'PATCH', { status: nextStatus });
+            setAdminFeedback(
+              nextStatus === 'suspended'
+                ? `Suspended @${u.username} and revoked active sessions.`
+                : `Reactivated @${u.username}.`,
+              'success'
+            );
+            await refreshAdminUsers();
+          } catch (err) {
+            setAdminFeedback(err.message, 'error');
+          }
+        });
+      }
+
+      const resetBtn = tr.querySelector('.admin-reset-pw-btn');
+      if (resetBtn) {
+        resetBtn.addEventListener('click', () => {
+          hideAdminInlinePanels();
+          if (DOM.adminResetUserId) DOM.adminResetUserId.value = u.id;
+          if (DOM.adminResetUserLabel) DOM.adminResetUserLabel.textContent = `${u.display_name} (@${u.username})`;
+          if (DOM.adminResetNewPassword) DOM.adminResetNewPassword.value = '';
+          if (DOM.adminResetPasswordForm) DOM.adminResetPasswordForm.style.display = 'block';
+          if (DOM.adminResetNewPassword) DOM.adminResetNewPassword.focus();
+        });
+      }
+
+      const deleteBtn = tr.querySelector('.admin-delete-btn');
+      if (deleteBtn) {
+        deleteBtn.addEventListener('click', () => {
+          hideAdminInlinePanels();
+          if (DOM.adminDeleteUserId) DOM.adminDeleteUserId.value = u.id;
+          if (DOM.adminDeleteUserLabel) DOM.adminDeleteUserLabel.textContent = `${u.display_name} (@${u.username})`;
+          if (DOM.adminDeleteConfirmBar) DOM.adminDeleteConfirmBar.style.display = 'block';
+        });
+      }
+
+      DOM.adminUsersTableBody.appendChild(tr);
+    });
+  }
+
+  async function enterUserSpace(targetUser) {
+    if (!state.currentUser || state.currentUser.role !== 'admin') return;
+    state.activeSpaceId = targetUser.space_id;
+    state.viewingSpaceOwner = targetUser.space_id === state.currentUser.space_id ? null : targetUser;
+    updateHeaderAuthControls();
+    closeAdminConsole();
+    showToast(
+      state.viewingSpaceOwner
+        ? `Entered separated space of ${targetUser.display_name} (@${targetUser.username})`
+        : 'Returned to your own System Admin space',
+      'info'
+    );
+    await hydrateAuthenticatedWorkspace();
+  }
+
+  async function returnToOwnSpace() {
+    if (!state.currentUser) return;
+    state.activeSpaceId = state.currentUser.space_id;
+    state.viewingSpaceOwner = null;
+    updateHeaderAuthControls();
+    showToast('Returned to your own workspace space.', 'info');
+    await hydrateAuthenticatedWorkspace();
+  }
+
+  function initAuthAndAdminUI() {
+    if (DOM.authTabLoginBtn) {
+      DOM.authTabLoginBtn.addEventListener('click', () => switchAuthMode('login'));
+    }
+    if (DOM.authTabRegisterBtn) {
+      DOM.authTabRegisterBtn.addEventListener('click', () => switchAuthMode('register'));
+    }
+
+    // First-Run System Admin Setup Form
+    if (DOM.authSetupAdminForm) {
+      DOM.authSetupAdminForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        setAuthFeedback('');
+        const username = DOM.setupAdminUsername ? DOM.setupAdminUsername.value.trim() : '';
+        const display_name = DOM.setupAdminDisplayName ? DOM.setupAdminDisplayName.value.trim() : '';
+        const email = DOM.setupAdminEmail ? DOM.setupAdminEmail.value.trim() : '';
+        const password = DOM.setupAdminPassword ? DOM.setupAdminPassword.value : '';
+        const confirm = DOM.setupAdminConfirm ? DOM.setupAdminConfirm.value : '';
+
+        if (password !== confirm) {
+          setAuthFeedback('Passwords do not match.', 'error');
+          return;
+        }
+        if (DOM.btnSubmitSetupAdmin) DOM.btnSubmitSetupAdmin.disabled = true;
+        try {
+          const res = await api('/api/auth/setup-admin', 'POST', { username, display_name, email, password });
+          await onAuthenticated(res, `System Admin @${res.user.username} initialized with isolated space.`);
+        } catch (err) {
+          setAuthFeedback(err.message, 'error');
+        } finally {
+          if (DOM.btnSubmitSetupAdmin) DOM.btnSubmitSetupAdmin.disabled = false;
+        }
+      });
+    }
+
+    // Sign In Form
+    if (DOM.authLoginForm) {
+      DOM.authLoginForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        setAuthFeedback('');
+        const identifier = DOM.loginIdentifier ? DOM.loginIdentifier.value.trim() : '';
+        const password = DOM.loginPassword ? DOM.loginPassword.value : '';
+        if (DOM.btnSubmitLogin) DOM.btnSubmitLogin.disabled = true;
+        try {
+          const res = await api('/api/auth/login', 'POST', { identifier, password });
+          await onAuthenticated(res, `Welcome back, ${res.user.display_name || res.user.username}!`);
+        } catch (err) {
+          setAuthFeedback(err.message, 'error');
+        } finally {
+          if (DOM.btnSubmitLogin) DOM.btnSubmitLogin.disabled = false;
+        }
+      });
+    }
+
+    // Self-Registration Form (Creates User + Separated Space)
+    if (DOM.authRegisterForm) {
+      DOM.authRegisterForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        setAuthFeedback('');
+        const username = DOM.regUsername ? DOM.regUsername.value.trim() : '';
+        const display_name = DOM.regDisplayName ? DOM.regDisplayName.value.trim() : '';
+        const email = DOM.regEmail ? DOM.regEmail.value.trim() : '';
+        const password = DOM.regPassword ? DOM.regPassword.value : '';
+        const confirm = DOM.regConfirm ? DOM.regConfirm.value : '';
+
+        if (password !== confirm) {
+          setAuthFeedback('Passwords do not match.', 'error');
+          return;
+        }
+        if (DOM.btnSubmitRegister) DOM.btnSubmitRegister.disabled = true;
+        try {
+          const res = await api('/api/auth/register', 'POST', { username, display_name, email, password });
+          await onAuthenticated(res, `Separated space created for @${res.user.username}!`);
+        } catch (err) {
+          setAuthFeedback(err.message, 'error');
+        } finally {
+          if (DOM.btnSubmitRegister) DOM.btnSubmitRegister.disabled = false;
+        }
+      });
+    }
+
+    // Sign Out
+    if (DOM.btnSignOut) {
+      DOM.btnSignOut.addEventListener('click', async () => {
+        try {
+          if (state.authToken) {
+            await api('/api/auth/logout', 'POST');
+          }
+        } catch (e) {}
+        clearSessionToAuthGate('You have been signed out cleanly.');
+      });
+    }
+
+    // Admin Console Modal Controls
+    if (DOM.btnOpenAdminConsole) {
+      DOM.btnOpenAdminConsole.addEventListener('click', openAdminConsole);
+    }
+    if (DOM.btnOpenAdminFromBanner) {
+      DOM.btnOpenAdminFromBanner.addEventListener('click', openAdminConsole);
+    }
+    if (DOM.btnReturnOwnSpace) {
+      DOM.btnReturnOwnSpace.addEventListener('click', returnToOwnSpace);
+    }
+    if (DOM.btnCloseAdminConsole) {
+      DOM.btnCloseAdminConsole.addEventListener('click', closeAdminConsole);
+    }
+    if (DOM.adminConsoleModal) {
+      DOM.adminConsoleModal.addEventListener('click', (e) => {
+        if (e.target === DOM.adminConsoleModal) closeAdminConsole();
+      });
+    }
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && DOM.adminConsoleModal && DOM.adminConsoleModal.classList.contains('active')) {
+        closeAdminConsole();
+      }
+    });
+
+    if (DOM.btnAdminRefreshUsers) {
+      DOM.btnAdminRefreshUsers.addEventListener('click', refreshAdminUsers);
+    }
+
+    // Toggle Public Self-Signup
+    if (DOM.adminToggleSelfSignup) {
+      DOM.adminToggleSelfSignup.addEventListener('change', async () => {
+        const allow = Boolean(DOM.adminToggleSelfSignup.checked);
+        try {
+          const res = await api('/api/admin/settings', 'PATCH', { allow_self_signup: allow });
+          state.adminSettings = res.settings || { allow_self_signup: allow };
+          setAdminFeedback(
+            allow
+              ? 'Public self-signup enabled: new users can register their own separated space.'
+              : 'Public self-signup disabled: only System Admins can provision new spaces.',
+            'success'
+          );
+        } catch (err) {
+          DOM.adminToggleSelfSignup.checked = !allow;
+          setAdminFeedback(err.message, 'error');
+        }
+      });
+    }
+
+    // Provision New User Form
+    if (DOM.btnToggleAdminCreateForm) {
+      DOM.btnToggleAdminCreateForm.addEventListener('click', () => {
+        const isOpen = DOM.adminCreateUserForm && DOM.adminCreateUserForm.style.display === 'block';
+        hideAdminInlinePanels();
+        if (!isOpen && DOM.adminCreateUserForm) {
+          DOM.adminCreateUserForm.reset();
+          DOM.adminCreateUserForm.style.display = 'block';
+          if (DOM.adminNewUsername) DOM.adminNewUsername.focus();
+        }
+      });
+    }
+    if (DOM.btnCancelAdminCreate) {
+      DOM.btnCancelAdminCreate.addEventListener('click', hideAdminInlinePanels);
+    }
+    if (DOM.adminCreateUserForm) {
+      DOM.adminCreateUserForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        setAdminFeedback('');
+        const payload = {
+          username: DOM.adminNewUsername ? DOM.adminNewUsername.value.trim() : '',
+          email: DOM.adminNewEmail ? DOM.adminNewEmail.value.trim() : '',
+          display_name: DOM.adminNewDisplayName ? DOM.adminNewDisplayName.value.trim() : '',
+          password: DOM.adminNewPassword ? DOM.adminNewPassword.value : '',
+          role: DOM.adminNewRole ? DOM.adminNewRole.value : 'user',
+        };
+        if (DOM.btnSubmitAdminCreate) DOM.btnSubmitAdminCreate.disabled = true;
+        try {
+          const res = await api('/api/admin/users', 'POST', payload);
+          DOM.adminCreateUserForm.reset();
+          hideAdminInlinePanels();
+          setAdminFeedback(`Created user @${res.user.username} with separated space ${res.user.space_id}.`, 'success');
+          await refreshAdminUsers();
+        } catch (err) {
+          setAdminFeedback(err.message, 'error');
+        } finally {
+          if (DOM.btnSubmitAdminCreate) DOM.btnSubmitAdminCreate.disabled = false;
+        }
+      });
+    }
+
+    // Reset Password Inline Form
+    if (DOM.btnCancelAdminReset) {
+      DOM.btnCancelAdminReset.addEventListener('click', hideAdminInlinePanels);
+    }
+    if (DOM.adminResetPasswordForm) {
+      DOM.adminResetPasswordForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const uid = DOM.adminResetUserId ? DOM.adminResetUserId.value : '';
+        const newPw = DOM.adminResetNewPassword ? DOM.adminResetNewPassword.value : '';
+        if (!uid) return;
+        try {
+          await api(`/api/admin/users/${encodeURIComponent(uid)}`, 'PATCH', { password: newPw });
+          hideAdminInlinePanels();
+          setAdminFeedback('Password updated and previous sessions revoked.', 'success');
+          await refreshAdminUsers();
+        } catch (err) {
+          setAdminFeedback(err.message, 'error');
+        }
+      });
+    }
+
+    // Delete User & Purge Space Inline Confirmation
+    if (DOM.btnCancelAdminDelete) {
+      DOM.btnCancelAdminDelete.addEventListener('click', hideAdminInlinePanels);
+    }
+    if (DOM.btnConfirmAdminDelete) {
+      DOM.btnConfirmAdminDelete.addEventListener('click', async () => {
+        const uid = DOM.adminDeleteUserId ? DOM.adminDeleteUserId.value : '';
+        if (!uid) return;
+        try {
+          const target = state.adminUsers.find((u) => u.id === uid);
+          const wasViewingTarget = target && state.activeSpaceId === target.space_id;
+          await api(`/api/admin/users/${encodeURIComponent(uid)}`, 'DELETE', { purge_space: true });
+          hideAdminInlinePanels();
+          setAdminFeedback('User account deleted and separated workspace purged.', 'success');
+          if (wasViewingTarget) {
+            await returnToOwnSpace();
+          }
+          await refreshAdminUsers();
+        } catch (err) {
+          setAdminFeedback(err.message, 'error');
+        }
+      });
+    }
+  }
+
   // Initialize Application
   window.addEventListener('DOMContentLoaded', () => {
     initPlatformDivision();
@@ -5001,7 +5773,8 @@
     }
     initModelSwitcher();
     initProjectSystem();
-    refreshSystem();
+    initAuthAndAdminUI();
+    bootAuthGate();
   });
 
 })();
